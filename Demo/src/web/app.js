@@ -240,23 +240,93 @@ $('#upload').addEventListener('change', async event => {
 });
 
 const dialog = $('#library');
-$('#open-library').addEventListener('click', async () => {
-  dialog.showModal();
-  $('#library-count').textContent = '';
-  $('#library-status').textContent = '正在读取…';
+const libraryLoadDialog = $('#library-load-progress');
+const libraryLoadClose = $('#library-load-close');
+let libraryLoad = new AbortController();
+
+export function shouldShowLibraryLoadProgress(data) {
+  return data.state === 'waiting' || data.state === 'scanning' || data.state === 'indexing' || data.state === 'failed';
+}
+
+function renderLibraryRows(entries) {
   $('#library-body').replaceChildren();
+  for (const row of entries) {
+    const cells = [row.id, row.file_name, row.part_number || '未知', row.error || '有效'];
+    const tr = document.createElement('tr');
+    cells.forEach(value => tr.append(textLine('td', value)));
+    $('#library-body').append(tr);
+  }
+  $('#library-count').textContent = entries.length;
+}
+
+function openLibraryTable(data) {
+  closeLibraryLoadProgress();
+  renderLibraryRows(data.entries || []);
+  $('#library-status').textContent = (data.entries || []).length ? '' : '基础模型库中暂无 STEP 模型。';
+  dialog.setAttribute('aria-busy', 'false');
+  if (!dialog.open) dialog.showModal();
+}
+
+function closeLibraryLoadProgress() {
+  libraryLoadDialog.removeAttribute('data-active');
+  libraryLoadDialog.removeAttribute('data-failed');
+  if (libraryLoadDialog.open) libraryLoadDialog.close();
+}
+
+function showLibraryLoadProgress(data) {
+  const percent = $('#library-load-percent');
+  const file = $('#library-load-file');
+  const meter = $('#library-load-meter');
+  const active = data.state === 'waiting' || data.state === 'scanning' || data.state === 'indexing';
+  const failed = data.state === 'failed';
+  libraryLoadDialog.toggleAttribute('data-active', active);
+  libraryLoadDialog.toggleAttribute('data-failed', failed);
+  libraryLoadClose.hidden = !failed;
+  if (data.total == null) {
+    percent.textContent = '--';
+    meter.removeAttribute('value');
+  } else {
+    const value = data.percent == null ? (data.total === 0 ? 100 : Math.round(((data.done ?? 0) / data.total) * 100)) : data.percent;
+    percent.textContent = `${value}%`;
+    meter.max = 100;
+    meter.value = value;
+  }
+  if (failed) {
+    file.textContent = data.reason
+      ? `基础模型库读取失败 · ${data.reason}`
+      : (data.text || '基础模型库读取失败');
+  } else {
+    file.textContent = data.current || (data.total == null ? '正在扫描' : '');
+  }
+  if (!libraryLoadDialog.open) libraryLoadDialog.showModal();
+}
+
+libraryLoadDialog.addEventListener('cancel', event => {
+  if (libraryLoadClose.hidden) event.preventDefault();
+});
+libraryLoadDialog.addEventListener('close', () => libraryLoad.abort());
+dialog.addEventListener('close', () => libraryLoad.abort());
+
+$('#open-library').addEventListener('click', async () => {
+  libraryLoad.abort();
+  libraryLoad = new AbortController();
+  const { signal } = libraryLoad;
   try {
-    const entries = await json('/api/library');
-    for (const row of entries) {
-      const cells = [row.id, row.file_name, row.part_number || '未知', row.error || '有效'];
-      const tr = document.createElement('tr');
-      cells.forEach(value => tr.append(textLine('td', value)));
-      $('#library-body').append(tr);
+    let data = await json('/api/library/refresh', { method: 'POST', signal });
+    while (!signal.aborted) {
+      if (data.state === 'complete') {
+        openLibraryTable(data);
+        return;
+      }
+      if (shouldShowLibraryLoadProgress(data)) showLibraryLoadProgress(data);
+      if (data.state === 'failed') return;
+      await waitForPoll(signal);
+      if (signal.aborted) return;
+      data = await json('/api/library', { signal });
     }
-    $('#library-count').textContent = entries.length;
-    $('#library-status').textContent = '';
   } catch (error) {
-    $('#library-status').textContent = `基础模型库读取失败 · ${error.message}`;
+    if (signal.aborted) return;
+    showLibraryLoadProgress({ state: 'failed', done: 0, total: null, reason: error.message, text: `基础模型库读取失败 · ${error.message}` });
   }
 });
 
@@ -265,7 +335,7 @@ $('#open-library-folder').addEventListener('click', async event => {
   button.disabled = true;
   try {
     await json('/api/library-folder', { method: 'POST' });
-    $('#library-status').textContent = '已打开基础模型库文件夹';
+    $('#library-status').textContent = '';
   } catch (error) {
     $('#library-status').textContent = `无法打开基础模型库文件夹 · ${error.message}`;
   } finally {

@@ -11,6 +11,7 @@ Windows 10/11 x64 上运行 `StepModelCompare-Studio-Setup-0.3.1-x64.exe`，按�
 | 安装目录 | 用法 |
 | --- | --- |
 | `Data/Base` | 放入 `.step` 或 `.stp` 基础模型，可用子目录分类。打开「基础模型库」或上传查询时，Studio 会索引新增、修改和移除的模型。「模型库文件夹」按钮可直接打开此目录。安装时可选装 37 件演示模型，位于 `Data/Base/Demo`。 |
+| `Data/.cache` | 保存基础模型索引 `base.sqlite3` 和模型库清单 `library-manifest.json`（清单版本、解析指纹、各文件相对路径、大小和 `mtime_ns`）。此目录位于 `Data` 下，再次编译时随 `Data` 一并保留，不会被下次 Compile 清空。 |
 | `Data/History` | 每次完成比对后生成一个查询编号目录，包含原始文件、查询结果 JSON、预览模型及所用候选 GLB。解析失败的文件不会写入 History。 |
 
 上传后的居中进度框会显示解析、基础库更新、候选比对或结果保存阶段。候选阶段按实际完成数量更新百分比，结果归档后到达 100%。安装升级和卸载会保留 Base 与 History 数据。
@@ -27,7 +28,7 @@ Windows 10/11 x64 上运行 `StepModelCompare-Studio-Setup-0.3.1-x64.exe`，按�
 
 ## 演示操作
 
-在页面点「基础模型库」查看 37 件演示样例，点击「模型库文件夹」可直接打开基础模型目录。关闭基础模型库后，按下列顺序通过「上传 STEP」选择 `Demo/samples/rehearsal/queries` 中的文件。每轮自动打开排第一的几何候选，待复核候选从「待复核」展开查看。
+在页面点「基础模型库」查看 37 件演示样例。只有第一次实际建库，或 `Data/Base` 中模型新增、删除、同名文件被修改，或清单/索引缺失、损坏、版本不匹配时，才会弹出与「正在比对 STEP」同结构的简洁加载框：左上为标题「正在加载基础模型库」，右上为真实百分比或扫描中的 `--`，中间为当前文件，下方为绿色条纹进度条，不含多余状态计数。无变化时（包括关闭后重开和程序重启）根据 `Data/.cache/library-manifest.json` 与实际目录的快速扫描结果直接列出模型，不出现加载框，也不重复解析。点击「模型库文件夹」可直接打开基础模型目录。关闭基础模型库后，按下列顺序通过「上传 STEP」选择 `Demo/samples/rehearsal/queries` 中的文件。每轮自动打开排第一的几何候选，待复核候选从「待复核」展开查看。
 
 | 演示样例 | 页面操作和检查 |
 | --- | --- |
@@ -93,7 +94,7 @@ Python、网页资源、配置和安装器定义集中在 `Demo/src`。构建机
 & Demo/Tools/Package.bat
 ```
 
-- `Compile.bat` 检查 Python 环境及构建依赖，编译到 `Demo/release/bundle/Studio/Studio.exe`。
+- `Compile.bat` 检查 Python 环境及构建依赖，编译到 `Demo/release/bundle/Studio/Studio.exe`。再次编译会更新程序文件，并完整保留已有的 `Studio/Data`（不覆盖其中任何已有文件，包括 `Base`、`History` 及用户自行放入的内容）。若还没有 `Data`，首次启动 Studio 会创建 `Base`、`History` 等工作目录。
 - `Package.bat` 先构建当前代码，再生成 `Demo/release/installer/StepModelCompare-Studio-Setup-0.3.1-x64.exe`。首次缺少 WebView2 离线运行时缓存时，包脚本会从微软下载。[Microsoft WebView2 下载](https://developer.microsoft.com/en-us/microsoft-edge/webview2/#download)
 
 简体中文资源来自 Inno Setup 6.7.3 的翻译文件，许可证随源码保留。[Inno Setup 翻译](https://jrsoftware.org/inno-setup/translations)

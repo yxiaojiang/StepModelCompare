@@ -36,7 +36,6 @@
       </aside>
       <section id="viewer" class="card viewer" aria-label="三维对比"></section>
     </div>
-    <p class="boundary">结果仅供几何比对。旧件能否采用，由工程负责人依据工程资料确认。</p>
   </main>
   <dialog id="library">
     <div class="dialog-head">
@@ -74,8 +73,18 @@
     </div>
     <div class="score-notes">
       <p>误差为 0 时得满分，达到零分阈值时得 0 分，其间按比例扣分。</p>
-      <p>表面偏差取两个方向的较大值，主轴尺寸取三轴中最大的相对误差。相对误差为差值的绝对值除以两值中的较大者。</p>
     </div>
+  </dialog>
+  <dialog id="library-load-progress" aria-labelledby="library-load-title">
+    <div class="progress-heading">
+      <h2 id="library-load-title">正在加载基础模型库</h2>
+      <output id="library-load-percent">--</output>
+    </div>
+    <p id="library-load-file"></p>
+    <progress id="library-load-meter" max="100" value="0" aria-label="基础模型库加载进度"></progress>
+    <form class="progress-actions" method="dialog">
+      <button id="library-load-close" type="submit" hidden>关闭</button>
+    </form>
   </dialog>
   <dialog id="comparison-progress" aria-labelledby="progress-title" aria-describedby="progress-stage">
     <div class="progress-heading">
