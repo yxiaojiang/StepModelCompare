@@ -21,6 +21,6 @@
 | 04-engineering-evidence-and-revision.md | 替代需求单、工况证据、料号/修订、成熟资料及采用报告 | 尚未启动；业务判断见实施方案第 1–2、5 节 |
 | 05-blind-test-and-acceptance.md | 正反例标注、盲测、风险上界、建议率和人工复核负担 | 待阶段 1 前提签认；口径见 DECISIONS 中 STEP-SIM-002 |
 | 06-pilot-and-platform.md | 离线原型、基础试点、平台增量投入和扩展条件 | 尚未启动；平台是通过试点门槛后的可选项 |
-| [07-customer-demo.md](07-customer-demo.md) | 客户 Demo 的范围、对齐、评分、中文安装版与彩排 | 0.3.1 已验证；新增 UI 源码调整待构建复核，随后待现场与客户样本验证 |
+| [07-customer-demo.md](07-customer-demo.md) | 客户 Demo 的范围、对齐、评分、中文安装版与彩排 | 0.3.1 已验证；结果列表与其它界面源码调整待 Windows 构建复核，随后待现场与客户样本验证 |
 
 具体模块工作开始后再创建对应文件，避免空白占位文档。模块划分、文件名可随实际交付调整，并同步更新本索引。

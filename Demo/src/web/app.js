@@ -110,19 +110,35 @@ function showScore(item, modelLabel) {
 
 function candidateRow(item, data, signal) {
   const entry = document.createElement('li');
+  entry.className = 'result-card';
   const button = document.createElement('button');
   button.className = 'candidate-select';
   button.type = 'button';
   button.dataset.model = item.id;
   button.setAttribute('aria-pressed', 'false');
   const alignment = item.alignment;
-  const { old_to_new, new_to_old } = alignment.overall;
-  const delta = alignment.size_delta_mm.map(value => value.toFixed(2)).join(' / ');
   const modelLabel = item.source === '基础模型' ? item.file_name : item.id;
-  button.append(textLine('strong', modelLabel, 'candidate-heading'),
-    textLine('span', `主轴尺寸差 ${delta} mm`, 'info'),
-    textLine('span', `整体 RMS 新→旧 ${new_to_old.rms_mm.toFixed(3)} / 旧→新 ${old_to_new.rms_mm.toFixed(3)} mm`, 'info'));
-  if (alignment.reason) button.append(textLine('span', alignment.reason, 'review-reason'));
+  const heading = document.createElement('span');
+  heading.className = 'candidate-heading-row';
+  heading.append(textLine('strong', modelLabel, 'candidate-heading'));
+  if (alignment.reason) heading.append(textLine('span', '待复核', 'review-status'));
+  button.append(heading);
+  if (item.similarity) {
+    const score = `${item.similarity.score.toFixed(1)} / 100`;
+    const scoreLine = document.createElement('span');
+    scoreLine.className = 'score-line';
+    scoreLine.append(textLine('span', '相似度', 'similarity-label'), textLine('span', score, 'similarity-score'));
+    button.append(scoreLine);
+    const details = textLine('button', '详情', 'score-detail-button');
+    details.type = 'button';
+    details.setAttribute('aria-haspopup', 'dialog');
+    details.setAttribute('aria-controls', 'score-dialog');
+    details.setAttribute('aria-label', `查看 ${modelLabel} 的评分详情，相似度 ${score}`);
+    details.addEventListener('click', () => showScore(item, modelLabel));
+    entry.append(button, details);
+  } else {
+    entry.append(button);
+  }
   button.addEventListener('click', async () => {
     container.querySelector('.empty-view').textContent = '正在加载模型…';
     document.querySelectorAll('.model-list button[aria-pressed="true"]').forEach(old => old.setAttribute('aria-pressed', 'false'));
@@ -141,18 +157,9 @@ function candidateRow(item, data, signal) {
       container.querySelector('.empty-view').textContent = `模型加载失败 · ${error.message}`;
     }
   });
-  entry.append(button);
-  if (item.similarity) {
-    const score = `${item.similarity.score.toFixed(1)} / 100`;
-    const details = textLine('button', '', 'score-detail-button');
-    details.type = 'button';
-    details.setAttribute('aria-haspopup', 'dialog');
-    details.setAttribute('aria-controls', 'score-dialog');
-    details.setAttribute('aria-label', `查看 ${modelLabel} 的评分详情，相似度 ${score}`);
-    details.append(textLine('span', score, 'similarity-score'), textLine('span', '详情', 'score-link'));
-    details.addEventListener('click', () => showScore(item, modelLabel));
-    entry.append(details);
-  }
+  entry.addEventListener('click', event => {
+    if (event.target === entry) button.click();
+  });
   return entry;
 }
 
