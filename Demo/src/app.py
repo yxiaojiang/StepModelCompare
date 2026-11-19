@@ -165,6 +165,28 @@ def get_library():
         return catalog(LIBRARY)
 
 
+@app.get("/api/library-folder")
+def get_library_folder_status():
+    available = STUDIO is not None and os.name == "nt" and hasattr(os, "startfile")
+    return {"available": available}
+
+
+@app.post("/api/library-folder")
+def open_library_folder():
+    if not STUDIO:
+        raise HTTPException(409, "当前运行模式没有独立的基础模型库文件夹")
+    if os.name != "nt" or not hasattr(os, "startfile"):
+        raise HTTPException(501, "只能在 Windows Studio 中打开基础模型库文件夹")
+    folder = STUDIO.base.resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+    try:
+        os.startfile(str(folder))
+    except OSError as exc:
+        logger.exception("Could not open the Studio base library folder")
+        raise HTTPException(500, "Windows 无法打开基础模型库文件夹") from exc
+    return {"opened": True}
+
+
 @app.post("/api/queries", status_code=202)
 async def upload(file: UploadFile = File(...)):
     started = perf_counter()

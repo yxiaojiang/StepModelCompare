@@ -21,7 +21,6 @@
       </div>
       <div class="query-label">
         <span id="query-name"></span>
-        <span id="query-source" class="tag" hidden></span>
       </div>
       <output id="query-status" role="status" aria-live="polite" data-state="idle">等待上传</output>
     </section>
@@ -42,12 +41,15 @@
   <dialog id="library">
     <div class="dialog-head">
       <h2>基础模型库 <span id="library-count"></span></h2>
-      <form method="dialog"><button type="submit">关闭</button></form>
+      <div class="dialog-actions">
+        <button id="open-library-folder" type="button" hidden>模型库文件夹</button>
+        <form method="dialog"><button type="submit">关闭</button></form>
+      </div>
     </div>
     <div id="library-status" role="status"></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>模型标识</th><th>文件</th><th>料号</th><th>修订</th><th>来源</th><th>导入</th></tr></thead>
+        <thead><tr><th>模型标识</th><th>文件</th><th>料号</th><th>导入</th></tr></thead>
         <tbody id="library-body"></tbody>
       </table>
     </div>

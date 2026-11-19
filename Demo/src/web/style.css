@@ -129,13 +129,28 @@ dialog::backdrop { background: #06101ac7; }
   background: #233449;
 }
 #progress-meter::-webkit-progress-bar { background: #233449; }
-#progress-meter::-webkit-progress-value { background: var(--accent); transition: width .2s ease; }
+#progress-meter::-webkit-progress-value { background: #20b957; transition: width .2s ease; }
+#comparison-progress[data-active] #progress-meter::-webkit-progress-value {
+  background: repeating-linear-gradient(135deg, #169c45 0 10px, #25cf60 10px 20px);
+  background-size: 28px 28px;
+  animation: progress-stripes .75s linear infinite;
+}
+@keyframes progress-stripes { to { background-position: 28px 0; } }
+@media (prefers-reduced-motion: reduce) {
+  #comparison-progress[data-active] #progress-meter::-webkit-progress-value { animation: none; }
+}
 #progress-stage { color: #dbe6f2; min-height: 20px; font-size: 14px; }
 #comparison-progress[data-failed] #progress-stage { color: #ffb4a9; }
 .progress-actions { display: flex; justify-content: flex-end; }
 .progress-actions button { margin-top: 14px; }
 .dialog-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-#score-dialog { width: min(610px, 95vw); max-height: 92dvh; }
+.dialog-actions { display: flex; align-items: center; gap: 8px; }
+#score-dialog {
+  width: min(610px, 95vw);
+  max-height: 61.34dvh;
+  transform: scale(1.5);
+  transform-origin: center;
+}
 .score-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
 .score-summary strong { overflow-wrap: anywhere; }
 .score-summary .review-reason { margin-top: 4px; }
@@ -154,6 +169,9 @@ th { background: #18263a; position: sticky; top: 0; }
 @media (max-width: 900px) {
   .workbench-grid { grid-template-columns: minmax(210px, 240px) minmax(0, 1fr); }
 }
+@media (max-width: 1100px) {
+  #score-dialog { max-height: 76.67dvh; transform: scale(1.2); }
+}
 @media (max-width: 650px) {
   .top { padding: 16px; }
   .dev { padding: 12px; }
@@ -161,4 +179,7 @@ th { background: #18263a; position: sticky; top: 0; }
   .workbench-grid { grid-template-columns: 1fr; }
   .results { max-height: 260px; overflow: auto; }
   .panes { flex-direction: column; }
+}
+@media (max-width: 760px) {
+  #score-dialog { max-height: 92dvh; transform: none; }
 }

@@ -36,6 +36,7 @@ function showProgress(percent, message) {
 }
 
 function showProgressFailure(message) {
+  delete progressDialog.dataset.active;
   progressDialog.dataset.failed = 'true';
   $('#progress-title').textContent = '比对失败';
   $('#progress-stage').textContent = message;
@@ -55,9 +56,6 @@ function setStatus(state, query, reason) {
   status.textContent = reason ? `${statusLabels[state]} · ${reason}` : statusLabels[state];
   if (query) {
     $('#query-name').textContent = query.file_name;
-    const source = $('#query-source');
-    source.textContent = query.source;
-    source.hidden = query.source !== '演示样例';
   }
 }
 
@@ -72,7 +70,6 @@ function clearResults() {
   $('#review-count').textContent = '';
   $('#result-hint').hidden = false;
   $('#result-hint').textContent = '等待检索结果。';
-  $('#query-source').hidden = true;
   delete container.dataset.candidate;
   delete container.dataset.queryId;
 }
@@ -123,7 +120,6 @@ function candidateRow(item, data, signal) {
   const delta = alignment.size_delta_mm.map(value => value.toFixed(2)).join(' / ');
   const modelLabel = item.source === '基础模型' ? item.file_name : item.id;
   button.append(textLine('strong', modelLabel, 'candidate-heading'),
-    textLine('span', `修订 ${item.revision} · ${item.source}`, 'info'),
     textLine('span', `主轴尺寸差 ${delta} mm`, 'info'),
     textLine('span', `整体 RMS 新→旧 ${new_to_old.rms_mm.toFixed(3)} / 旧→新 ${old_to_new.rms_mm.toFixed(3)} mm`, 'info'));
   if (alignment.reason) button.append(textLine('span', alignment.reason, 'review-reason'));
@@ -135,7 +131,7 @@ function candidateRow(item, data, signal) {
     if (!viewer) return;
     try {
       const newModel = { ...data.query.info, glb: data.query.glb, label: data.query.file_name };
-      const oldModel = { ...item.info, glb: item.glb, label: `${modelLabel} · 修订 ${item.revision}` };
+      const oldModel = { ...item.info, glb: item.glb, label: modelLabel };
       const ready = await viewer.load(newModel, oldModel, alignment);
       if (ready && !signal.aborted) {
         container.dataset.queryId = data.id;
@@ -198,6 +194,7 @@ $('#upload').addEventListener('change', async event => {
   clearResults();
   setStatus('parsing', { file_name: file.name });
   delete progressDialog.dataset.failed;
+  progressDialog.dataset.active = 'true';
   progressClose.hidden = true;
   $('#progress-title').textContent = '正在比对 STEP';
   $('#progress-file').textContent = file.name;
@@ -213,6 +210,7 @@ $('#upload').addEventListener('change', async event => {
       setStatus(data.state, data.query, data.reason);
       showProgress(data.progress ?? 0, data.progress_text ?? statusLabels[data.state]);
       if (data.state === 'complete') {
+        delete progressDialog.dataset.active;
         showResponse(data, signal);
         // Let the completed bar paint before dismissing the modal.
         await new Promise(resolve => setTimeout(resolve, 300));
@@ -243,10 +241,9 @@ $('#open-library').addEventListener('click', async () => {
   try {
     const entries = await json('/api/library');
     for (const row of entries) {
-      const cells = [row.id, row.file_name, row.part_number || '未知', row.revision,
-        row.source, row.error || '有效'];
+      const cells = [row.id, row.file_name, row.part_number || '未知', row.error || '有效'];
       const tr = document.createElement('tr');
-      cells.forEach((value, index) => tr.append(textLine('td', value, index === 4 ? 'source-cell' : '')));
+      cells.forEach(value => tr.append(textLine('td', value)));
       $('#library-body').append(tr);
     }
     $('#library-count').textContent = entries.length;
@@ -254,4 +251,23 @@ $('#open-library').addEventListener('click', async () => {
   } catch (error) {
     $('#library-status').textContent = `基础模型库读取失败 · ${error.message}`;
   }
+});
+
+$('#open-library-folder').addEventListener('click', async event => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await json('/api/library-folder', { method: 'POST' });
+    $('#library-status').textContent = '已打开基础模型库文件夹';
+  } catch (error) {
+    $('#library-status').textContent = `无法打开基础模型库文件夹 · ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+json('/api/library-folder').then(({ available }) => {
+  $('#open-library-folder').hidden = !available;
+}).catch(() => {
+  $('#open-library-folder').hidden = true;
 });
