@@ -16,8 +16,18 @@ WEBVIEW_INSTALLER = "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
 BUNDLE = RELEASE / "bundle" / "Studio"
 STAGING_DIST = RELEASE / "bundle-staging"
 BASE = RELEASE / "demo-base"
+TEST = RELEASE / "demo-test"
+TEST_SEED = DEMO / "samples" / "rehearsal" / "queries"
 DATA_DIR_NAME = "Data"
+TEST_DIR_NAME = "test"
 PUBLISH_PREFIX = ".studio-publish-"
+TEST_MODELS = (
+    "SHOW-DAMAGED.stp",
+    "SHOW-HOLE.step",
+    "SHOW-POSE-INCH.step",
+    "SHOW-POSE-RETRY.stp",
+    "SHOW-SYMMETRIC.step",
+)
 
 
 def _is_data_path(path):
@@ -73,6 +83,47 @@ def _replace_item(src, dest):
         _remove(bak)
     except BaseException:
         raise
+
+
+def prepare_test_models(dest=None):
+    """Copy the tracked rehearsal query models into a packaging seed directory."""
+    dest = Path(dest) if dest is not None else TEST
+    dest.mkdir(parents=True, exist_ok=True)
+    expected = {name.casefold(): name for name in TEST_MODELS}
+    for path in list(dest.iterdir()):
+        if not path.is_file() or path.name.casefold() not in expected:
+            _remove(path)
+    for name in TEST_MODELS:
+        source = TEST_SEED / name
+        if not source.is_file():
+            raise RuntimeError(f"Missing packaged test model: {source}")
+        if source.suffix.lower() not in {".step", ".stp"}:
+            raise RuntimeError(f"Refusing to package a non-STEP test file: {source}")
+        shutil.copy2(source, dest / name)
+    found = {path.name.casefold() for path in dest.iterdir() if path.is_file()}
+    if found != set(expected):
+        raise RuntimeError(f"Packaged test directory contains unexpected files: {dest}")
+    return dest
+
+
+def seed_test_into_data(data_dir, source_dir=None):
+    """Create Data/test and copy seed models only when the destination file is missing."""
+    source_dir = Path(source_dir) if source_dir is not None else TEST
+    dest = Path(data_dir) / TEST_DIR_NAME
+    dest.mkdir(parents=True, exist_ok=True)
+    copied = []
+    skipped = []
+    for name in TEST_MODELS:
+        source = source_dir / name
+        if not source.is_file():
+            raise RuntimeError(f"Missing test seed model: {source}")
+        target = dest / name
+        if target.exists():
+            skipped.append(name)
+            continue
+        shutil.copy2(source, target)
+        copied.append(name)
+    return copied, skipped
 
 
 def publish_studio_bundle(built, dest):
@@ -137,6 +188,8 @@ def compile_studio():
             str(SOURCE / "studio.py")
         ], check=True)
         publish_studio_bundle(STAGING_DIST / "Studio", BUNDLE)
+        prepare_test_models(TEST)
+        seed_test_into_data(BUNDLE / "Data", TEST)
     except BaseException:
         # Keep the staging tree for diagnosis. BUNDLE/Data was not used as a
         # scratch directory. The next compile removes leftover staging first.
@@ -148,6 +201,7 @@ def compile_studio():
 def package_studio(runtime, iscc):
     if not (BUNDLE / "Studio.exe").is_file() or not BASE.is_dir():
         raise RuntimeError("The Studio bundle is missing. Run Compile.bat first.")
+    prepare_test_models(TEST)
     if not iscc.is_file():
         raise RuntimeError(f"Inno Setup compiler not found: {iscc}")
     if runtime.name != WEBVIEW_INSTALLER:
@@ -160,8 +214,9 @@ def package_studio(runtime, iscc):
                         "--output", str(download)], check=True)
         download.replace(runtime)
     subprocess.run([
-        str(iscc), f"/DBundleDir={BUNDLE}", f"/DBaseDir={BASE}", f"/DWebViewInstaller={runtime}",
-        f"/O{RELEASE / 'installer'}", str(SOURCE / "packaging" / "Studio.iss")
+        str(iscc), f"/DBundleDir={BUNDLE}", f"/DBaseDir={BASE}", f"/DTestDir={TEST}",
+        f"/DWebViewInstaller={runtime}", f"/O{RELEASE / 'installer'}",
+        str(SOURCE / "packaging" / "Studio.iss")
     ], check=True)
 
 

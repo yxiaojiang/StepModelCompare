@@ -44,10 +44,34 @@ function showProgressFailure(message) {
   progressClose.focus();
 }
 
+export function readApiErrorMessage(status, text) {
+  const raw = (text || '').trim();
+  if (!raw) return `服务器返回错误（${status}），请重试。`;
+  try {
+    const body = JSON.parse(raw);
+    const detail = [body.detail, body.error, body.reason, body.message].find(value => typeof value === 'string' && value.trim());
+    if (detail) {
+      const cleaned = detail.trim().replace(/[A-Za-z]:\\[^\s]+/g, '').replace(/\/(?:home|Users|tmp|var)[^\s]+/g, '').trim();
+      if (cleaned && cleaned.length <= 300) return cleaned;
+    }
+  } catch {
+    /* Non-JSON bodies such as "Internal Server Error" should not be parsed as application errors. */
+  }
+  return `服务器返回错误（${status}），请重试。`;
+}
+
 async function json(url, options) {
   const response = await fetch(url, options);
-  const body = await response.json();
-  if (!response.ok) throw Error(typeof body.detail === 'string' ? body.detail : `请求失败 (${response.status})`);
+  const text = await response.text();
+  let body = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw Error(response.ok ? '服务器返回了无法解析的响应，请重试。' : readApiErrorMessage(response.status, text));
+    }
+  }
+  if (!response.ok) throw Error(readApiErrorMessage(response.status, text));
   return body;
 }
 

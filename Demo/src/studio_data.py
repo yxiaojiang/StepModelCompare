@@ -20,6 +20,7 @@ class StudioData:
     def __init__(self, data_path):
         self.base = Path(data_path) / "Base"
         self.history = Path(data_path) / "History"
+        self.test = Path(data_path) / "test"
         self.pending = Path(data_path) / ".work"
         self.library = Path(data_path) / ".cache" / "base.sqlite3"
         self.manifest = Path(data_path) / ".cache" / MANIFEST_NAME
@@ -28,7 +29,7 @@ class StudioData:
             self.samples = json.loads(SAMPLE_METADATA.read_text(encoding="utf-8"))
 
     def initialize(self):
-        for directory in (self.base, self.history, self.pending, self.library.parent):
+        for directory in (self.base, self.history, self.test, self.pending, self.library.parent):
             directory.mkdir(parents=True, exist_ok=True)
 
     def index_version(self):
@@ -190,3 +191,7 @@ class StudioData:
             report(total, total)
         self.write_manifest(inventory, fingerprint_version)
         return inventory
+
+    def query_directory(self, query_id):
+        archive = self.history / query_id
+        return archive if archive.is_dir() else self.pending / query_id

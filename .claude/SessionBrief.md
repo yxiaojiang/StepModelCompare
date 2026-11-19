@@ -4,17 +4,14 @@
 面向客户已有的千件级 STEP 历史库，判断某个新设计是否可由满足本次工程要求的已发布旧件修订直接替代。几何相似度负责缩小和排序候选，不直接等同于可替代；最终建议必须有几何、功能接口、工况、版本和成熟资料证据，并由工程负责人确认。
 
 ## 当前已定口径
-- **近期交付。** STEP-SIM-003 Demo 已更新为简体中文 Windows Studio 0.3.1。候选和待复核模型可点击分数旁的「详情」查看六项误差、得分及标准。源码集中于 `Demo/src`，`Demo/Tools` 提供编译和打包入口。基础件从 `Data/Base` 读取，完成查询写入 `Data/History`。
-- **Demo 源码待编译进安装包。** 0.3.1 安装包之后的源码还有未打包改动，均未做 Windows Studio / WebView2 实机视觉复核，也未由用户确认为通过：
-  - 结果列表为两行卡片（名称、相似度、必要的「待复核」）；主轴尺寸差、双向 RMS 和对齐原因只在「详情」中查看。Linux Chrome 曾核对约 310px 侧栏，不是 Studio 安装版复核。
-  - 四处界面调整：打开「模型库文件夹」成功后不再提示（失败仍提示）；展开的「待复核」标题间距与「几何候选」一致；主界面去掉底部几何比对用途说明（口径仍写在操作说明中）；「相似度评分详情」约缩小 20%，去掉末段表面/主轴误差计算说明，保留按比例扣分说明。评分、阈值和分组未改。
-  - Compile.bat 先在 `Demo/release/bundle-staging` 生成程序，再只更新 `bundle/Studio` 中的程序文件，完整保留已有 `Data` 且不覆盖其中文件；首次无 `Data` 时由 Studio 启动初始化。该逻辑已用独立临时目录测试验证，未跑会替换当前 exe 的完整编译。
-  - 「基础模型库」仅在首次实际建库，或 `Data/Base` 发生增删、同名修改，或 `Data/.cache/library-manifest.json` / SQLite 索引不可安全复用时，才弹出与「正在比对 STEP」同结构的简洁加载框（标题、真实百分比或扫描中的 `--`、当前文件、绿色条纹进度条），不含多余状态计数。无变化时（含关闭重开和程序重启）对照清单与实际目录的相对路径、大小、`mtime_ns` 及现有索引直接列出，不调用 `refresh_base`，也不闪加载框。清单仅在刷新成功后原子写入；失败不标记成功。JSON 损坏但索引与目录仍一致时，重写清单并复用，不重复解析。已用临时 Data 完成 22 项进度单元测试和 7 项 HTTP/前端显示条件测试；本轮未做浏览器或 Studio 窗口视觉复核。当前 bundle 早于这些改动，需再次 Compile.bat 后才能在 Studio 中看到。
-- **正式项目。** STEP-SIM-002 仍是业务与试点基线，STEP-SIM-001 的字段复用主目标已被部分替代。正式采用须核对本次需求、几何与接口、工况、确切修订和成熟资料，并由工程负责人确认。正式方案及汇报材料位于 Docs/。
+- **近期交付。** STEP-SIM-003 Demo 已更新为简体中文 Windows Studio 0.3.1。候选和待复核模型可点击分数旁的「详情」查看六项误差、得分及标准。源码集中于 `Demo/src`，`Demo/Tools` 提供编译和打包入口。基础件从 `Data/Base` 读取，完成查询写入 `Data/History`。当前工作分支为 `test1`（相对 Demo 合并点 `d626c196bb3de4d45ca994ac261ba418e027004e`，含安装 `Data/test` 种子与比对进度修复）。PR #1 已合并进 Demo；旧分支 `cursor/result-list-layout-e93d` 已删除，不要恢复。
+- **安装包中的 Data/test。** 用户已确认用先前安装包全新安装后，`Data/test` 存在且可用。种子来自已入库的 `Demo/samples/rehearsal/queries` 的 5 个 STEP（与桌面 queries 哈希一致），不作为 Base 自动导入，也不写入 History。升级时已有同名文件不覆盖（Inno `onlyifdoesntexist`）。Compile 只向缺失的 `Data/test` 文件补种，不覆盖已有 Data，也不把运行中的 History/.cache 打进安装包。
+- **SHOW-HOLE 比对失败已修，待用户用新包确认。** 用户实测先前安装包（2026-11-19 17:09）时，用 `Data/test/SHOW-HOLE.step` 比对，界面显示「比对失败 0%」和 JSON 解析错误。只读日志显示后台比对已完成并写入 History，但轮询 `GET /api/queries/{id}` 因 `AttributeError: 'StudioData' object has no attribute 'query_directory'` 返回纯文本 500。该方法在 `14d1150` 重写 `studio_data.py` 时被漏掉。源码已恢复 `query_directory`；未处理异常改为 JSON 错误（不泄露路径或堆栈）；前端对非 JSON / 非 2xx 显示可理解错误。临时 Data 上真实上传 SHOW-HOLE 并轮询至完成的 HTTP 测试已通过。含此修复的安装包为 `Demo/release/installer/StepModelCompare-Studio-Setup-0.3.1-x64.exe`（0.3.1，2026-11-19 17:24:23，Asia/Singapore UTC+8）。用户尚未明确确认安装该新包后比对通过，不能写成已实机验收。`SHOW-DAMAGED.stp` 仍是故意损坏样例，不应要求比对成功。
+- **正式项目。** STEP-SIM-002 仍是业务与试点基线。正式方案及汇报材料位于 Docs/。
 - **讨论状态。** PlanDocs 已收口至 IDLE，最近采纳决定为 STEP-SIM-003。
 
 ## 未决前提
-- **Demo。** 客户 STEP 尚未提供，客户文件兼容性、现场响应和整机断网复跑待验证。缺少 WebView2 的目标机补装流程待验证。当前源码改动待再编译后由用户在 Studio 中视觉确认。
+- **Demo。** 客户 STEP 尚未提供，现场响应和整机断网复跑待验证。缺少 WebView2 的目标机补装流程待验证。修复后的比对与先前界面改动，待用户关闭当前 Studio 并安装 17:24 的新包后确认。
 - **正式试点。** 待确认需求单真实试填、设计时点证据和盲测正例规模，以及预计建议率、可接受误推荐风险上界、待核定和待复核合计人工核查上限。
 
 ## 最近交付索引
@@ -28,4 +25,4 @@
 
 ## 下一步
 
-先用当前源码在 Windows 上再编译 Studio，请用户复核界面与模型库加载行为并确认已有 Data 被保留；再按 [当前计划](Plan.md) 做现场环境复核。收到客户资料后，分别验证真实 STEP 的 Demo 链路和正式试点的阶段 1 前提。
+请用户自行关闭正在运行的 Studio 后，安装 `Demo/release/installer/StepModelCompare-Studio-Setup-0.3.1-x64.exe`（2026-11-19 17:24:23），再用 `Data/test` 中的 SHOW-HOLE 等正常模型复核比对。不要把尚未确认的比对或视觉写成已通过。再按 [当前计划](Plan.md) 做现场环境复核。

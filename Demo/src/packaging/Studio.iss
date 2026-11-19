@@ -32,12 +32,14 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; Flags: unchecked
 [Dirs]
 Name: "{app}\Data\Base"; Flags: uninsneveruninstall
 Name: "{app}\Data\History"; Flags: uninsneveruninstall
+Name: "{app}\Data\test"; Flags: uninsneveruninstall
 
 [Files]
 Source: "{#WebViewInstaller}"; DestName: "{#WebViewName}"; Flags: dontcopy nocompression
 Source: "{#BundleDir}\Studio.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BundleDir}\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs
 Source: "{#BaseDir}\*"; DestDir: "{app}\Data\Base\Demo"; Tasks: demos; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "{#TestDir}\*"; DestDir: "{app}\Data\test"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\Studio.exe"; WorkingDir: "{app}"

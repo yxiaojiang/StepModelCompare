@@ -13,7 +13,9 @@ from time import perf_counter, sleep
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 
 from geometry import SETTINGS, export_glb, read_step
@@ -154,6 +156,14 @@ async def lifespan(app):
 
 
 app = FastAPI(title="STEP 相似检索", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request, exc):
+    if isinstance(exc, (HTTPException, StarletteHTTPException, RequestValidationError)):
+        raise exc
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "服务器处理请求失败，请重试。"}, status_code=500)
 
 
 @app.middleware("http")
