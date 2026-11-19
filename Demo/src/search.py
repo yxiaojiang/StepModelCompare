@@ -1,12 +1,13 @@
 """Shared retrieval pipeline for the web query and development calibration."""
 
 from time import perf_counter
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import get_context
 
 from alignment import compare
 from geometry import SETTINGS, Mesh, Surface
 from library import catalog, coarse_order, mesh_blob
+from similarity import similarity_score
 
 
 def worker_pool():
@@ -30,18 +31,27 @@ def lists(results):
     return reliable, review
 
 
-def retrieve(database, new, pool, k, annotation=None, evidence_path=None):
+def retrieve(database, new, pool, k, annotation=None, evidence_path=None, progress=None):
     entries = catalog(database)
     ordered = coarse_order(new, entries)
     packed = new.packed()
-    futures = []
+    futures = {}
     for coarse_rank, entry in enumerate(ordered[:k], 1):
         region = annotation["hole"] if annotation and annotation["target"] == entry["id"] else None
         future = pool.submit(evaluate, packed, new.info, mesh_blob(database, entry["id"]), entry["info"],
                              region, evidence_path if region is not None else None)
-        futures.append((coarse_rank, entry, future))
-    comparisons = [{**entry, "coarse_rank": rank, "alignment": future.result()}
-                   for rank, entry, future in futures]
+        futures[future] = (coarse_rank, entry)
+    if progress:
+        progress(0, len(futures))
+    comparisons = []
+    for future in as_completed(futures):
+        rank, entry = futures[future]
+        alignment = future.result()
+        comparisons.append({**entry, "coarse_rank": rank, "alignment": alignment,
+                            "similarity": similarity_score(new.info, entry["info"], alignment)})
+        if progress:
+            progress(len(comparisons), len(futures))
+    comparisons.sort(key=lambda entry: entry["coarse_rank"])
     reliable, review = lists(comparisons)
     return {"candidates": reliable[:SETTINGS["top_results"]], "review": review,
             "coarse_order": [entry["id"] for entry in ordered],

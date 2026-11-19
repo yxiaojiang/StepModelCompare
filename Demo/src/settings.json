@@ -16,5 +16,13 @@
   "coarse_k": 5,
   "coarse_area_weight": 0.35,
   "coarse_volume_weight": 0.35,
-  "top_results": 5
+  "top_results": 5,
+  "similarity": {
+    "surface_rms": {"weight": 40, "zero_at": 2.0},
+    "surface_p95": {"weight": 20, "zero_at": 2.0},
+    "surface_max": {"weight": 10, "zero_at": 8.0},
+    "size": {"weight": 20, "zero_at": 0.10},
+    "area": {"weight": 5, "zero_at": 0.15},
+    "volume": {"weight": 5, "zero_at": 0.15}
+  }
 }

@@ -1,2 +1,3 @@
 # Preserve the exact byte sequences recorded in the Demo freeze manifest.
 Demo/** -text
+Demo/Tools/*.bat text eol=crlf

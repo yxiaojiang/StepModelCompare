@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+from math import isclose
 from pathlib import Path
 from time import perf_counter
 from urllib.parse import urlparse
@@ -10,8 +11,8 @@ from urllib.parse import urlparse
 from playwright.sync_api import Error, sync_playwright
 
 from check_browser import EVIDENCE, check_hole, check_reference_points, check_saved_hole, launch
-from geometry import ROOT
 from make_samples import SAMPLES, digest, write_json
+from paths import ROOT
 
 
 def data_for(page, query_id):
@@ -69,6 +70,49 @@ def select_candidate(page, model_id, query_id, review=False):
     page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
     assert page.locator("#viewer").get_attribute("data-mode") == "side"
     return perf_counter() - started
+
+
+def check_similarity(page, data, data_dir):
+    saved = json.loads((data_dir / data["id"] / "status.json").read_text(encoding="utf-8"))
+    scores = {}
+    for group in ("candidates", "review"):
+        for entry, archived in zip(data[group], saved[group], strict=True):
+            similarity = entry["similarity"]
+            assert similarity == archived["similarity"]
+            parts = list(similarity["parts"].values())
+            assert sum(part["weight"] for part in parts) == 100
+            assert all(0 <= part["points"] <= part["weight"] for part in parts)
+            total = similarity["score"]
+            assert 0 <= total <= 100 and isclose(total, sum(part["points"] for part in parts))
+            score = page.locator(f'#{group} li:has(button[data-model="{entry["id"]}"]) .similarity-score')
+            assert score.text_content() == f"{total:.1f} / 100"
+            scores[entry["id"]] = total
+    return scores
+
+
+def check_score_detail(page, item, screenshot=None):
+    model = item["id"]
+    button = page.locator(f'li:has(button[data-model="{model}"]) .score-detail-button')
+    selected = page.locator(".candidate-select[aria-pressed='true']").get_attribute("data-model")
+    button.click()
+    details = page.get_by_role("dialog", name="相似度评分详情")
+    assert details.is_visible()
+    assert details.locator("#score-model").inner_text() == model
+    assert details.locator("#score-total").inner_text() == f'{item["similarity"]["score"]:.1f}'
+    rendered = details.locator("tbody tr").all()
+    for row, (name, part) in zip(rendered, item["similarity"]["parts"].items(), strict=True):
+        if name.startswith("surface_"):
+            error, limit = f'{part["error"]:.3f} mm', f'{part["zero_at"]:g} mm'
+        else:
+            error, limit = f'{part["error"] * 100:.2f}%', f'{part["zero_at"] * 100:g}%'
+        assert row.locator("td").all_text_contents() == [error, f'{part["points"]:.2f} / {part["weight"]}', limit]
+    assert details.locator("#score-review").is_visible() == bool(item["alignment"]["reason"])
+    if screenshot:
+        page.screenshot(path=str(screenshot))
+    page.keyboard.press("Escape")
+    assert details.is_hidden()
+    assert button.evaluate("node => node === document.activeElement")
+    assert page.locator(".candidate-select[aria-pressed='true']").get_attribute("data-model") == selected
 
 
 def check_linked_view(page):
@@ -142,6 +186,8 @@ def rehearsal(url, data_dir, report, visible=False):
             observations.append(observation)
             observation["case"] = case["id"]
             observation["passed"] = False
+            if data["state"] == "complete":
+                observation["similarity_scores"] = check_similarity(page, data, data_dir)
             write_json(report, {"cases": observations})
             if target := case.get("target"):
                 observation["target"] = target
@@ -160,6 +206,7 @@ def rehearsal(url, data_dir, report, visible=False):
                 candidate = next(entry for entry in data["candidates"] if entry["id"] == target)
                 observation["overall"] = candidate["alignment"]["overall"]
                 if case["id"] == "pose":
+                    assert candidate["similarity"]["score"] >= 99.9
                     check_linked_view(page)
                     page.locator("#view-mode").select_option("overlay")
                     observation["pose"] = check_reference_points(page, case["references"], case["max_error_mm"])
@@ -176,6 +223,8 @@ def rehearsal(url, data_dir, report, visible=False):
                     }""")
                     page.screenshot(path=str(EVIDENCE / "rehearsal-pose.png"))
                 else:
+                    assert 65 <= candidate["similarity"]["score"] < 95
+                    check_score_detail(page, data["candidates"][1])
                     hole = candidate["alignment"]["hole"]
                     assert hole["status"] == "ok"
                     observation["hole"] = check_hole(page, hole, "rehearsal")
@@ -185,6 +234,7 @@ def rehearsal(url, data_dir, report, visible=False):
                     assert low <= observation["hole"]["page_mm"] <= high
                     page.locator("#visibility").select_option("both")
                     page.screenshot(path=str(EVIDENCE / "rehearsal-hole.png"))
+                    check_score_detail(page, candidate, EVIDENCE / "score-details.png")
             elif target := case.get("review_target"):
                 assert target not in observation["top5"] and observation["review"][target] == case["state"]
                 observation["switch_seconds"] = select_candidate(page, target, data["id"], review=True)
@@ -195,7 +245,9 @@ def rehearsal(url, data_dir, report, visible=False):
                 observation["unique"] = result["unique"]
                 assert len(result["accepted"]) >= 2 and result["disagreements"]
                 assert result["scene_matrix"] is None and page.locator("#view-mode").is_disabled()
+                assert observation["similarity_scores"][target] >= 99.9
                 assert page.locator("#new-pane").is_visible() and page.locator("#old-pane").is_visible()
+                check_score_detail(page, next(entry for entry in data["review"] if entry["id"] == target))
                 page.screenshot(path=str(EVIDENCE / "rehearsal-ambiguity.png"))
             else:
                 assert data["state"] == "failed" and "无法读取 STEP" in data["reason"]

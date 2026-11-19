@@ -10,7 +10,7 @@
 <body>
   <header class="top app-top">
     <h1>STEP 相似检索</h1>
-    <button id="open-library" type="button">历史库</button>
+    <button id="open-library" type="button">基础模型库</button>
   </header>
   <main class="workbench">
     <section class="card upload">
@@ -41,7 +41,7 @@
   </main>
   <dialog id="library">
     <div class="dialog-head">
-      <h2>历史库 <span id="library-count"></span></h2>
+      <h2>基础模型库 <span id="library-count"></span></h2>
       <form method="dialog"><button type="submit">关闭</button></form>
     </div>
     <div id="library-status" role="status"></div>
@@ -51,6 +51,41 @@
         <tbody id="library-body"></tbody>
       </table>
     </div>
+  </dialog>
+  <dialog id="score-dialog" aria-labelledby="score-title">
+    <div class="dialog-head">
+      <h2 id="score-title">相似度评分详情</h2>
+      <form method="dialog"><button type="submit" autofocus>关闭</button></form>
+    </div>
+    <div class="score-summary">
+      <div>
+        <strong id="score-model"></strong>
+        <p id="score-review" class="review-reason" hidden></p>
+      </div>
+      <div class="score-total"><span id="score-total"></span> <small>/ 100</small></div>
+    </div>
+    <div class="table-wrap">
+      <table class="score-table">
+        <thead><tr><th scope="col">评分项</th><th scope="col">实测误差</th><th scope="col">得分 / 满分</th><th scope="col">零分阈值</th></tr></thead>
+        <tbody id="score-body"></tbody>
+      </table>
+    </div>
+    <div class="score-notes">
+      <p>误差为 0 时得满分，达到零分阈值时得 0 分，其间按比例扣分。</p>
+      <p>表面偏差取两个方向的较大值，主轴尺寸取三轴中最大的相对误差。相对误差为差值的绝对值除以两值中的较大者。</p>
+    </div>
+  </dialog>
+  <dialog id="comparison-progress" aria-labelledby="progress-title" aria-describedby="progress-stage">
+    <div class="progress-heading">
+      <h2 id="progress-title">正在比对 STEP</h2>
+      <output id="progress-percent">0%</output>
+    </div>
+    <p id="progress-file"></p>
+    <progress id="progress-meter" max="100" value="0" aria-label="比对进度"></progress>
+    <p id="progress-stage" role="status" aria-live="polite">正在提交文件</p>
+    <form class="progress-actions" method="dialog">
+      <button id="progress-close" type="submit" hidden>关闭</button>
+    </form>
   </dialog>
   <script type="module" src="./app.js"></script>
 </body>

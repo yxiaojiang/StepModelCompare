@@ -6,9 +6,10 @@ import json
 import platform
 from pathlib import Path
 
-from geometry import ROOT, SETTINGS
+from geometry import SETTINGS
 from library import LIBRARY
 from make_samples import SAMPLES, digest, write_json
+from paths import ROOT, SOURCE, WEB
 
 
 def snapshot():
@@ -16,10 +17,11 @@ def snapshot():
     registered = SAMPLES / "rehearsal/cases.json"
     manifest = json.loads(catalog.read_text(encoding="utf-8"))
     queries = json.loads(registered.read_text(encoding="utf-8"))
-    dist = ROOT / "dist"
-    inputs = [LIBRARY, catalog, registered, ROOT / "requirements.txt", ROOT / "settings.json",
-              *ROOT.glob("*.py"), *dist.glob("*.js"), *dist.glob("*.html"),
-              *dist.glob("*.css"), *(p for p in (dist / "vendor").rglob("*") if p.is_file()),
+    inputs = [LIBRARY, catalog, registered, *SOURCE.glob("*.txt"), SOURCE / "settings.json",
+              *SOURCE.glob("*.py"), *WEB.glob("*.js"), *WEB.glob("*.html"), *WEB.glob("*.css"),
+              *(p for p in (WEB / "vendor").rglob("*") if p.is_file()),
+              *(p for p in (SOURCE / "packaging").glob("*") if p.is_file()),
+              *(ROOT / "Tools").glob("*.bat"),
               *(SAMPLES / item["file"] for item in manifest),
               *(registered.parent / "queries" / item["file"] for item in queries),
               registered.parent / "queries/SHOW-POSE-RETRY.stp"]

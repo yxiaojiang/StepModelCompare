@@ -8,6 +8,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Lock
 from time import perf_counter, sleep
 from uuid import UUID, uuid4
 
@@ -15,14 +16,20 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from geometry import ROOT, SETTINGS, export_glb, read_step
-from library import LIBRARY as DEFAULT_LIBRARY, catalog, glb_blob
+from geometry import SETTINGS, export_glb, read_step
+from library import LIBRARY as DEFAULT_LIBRARY
+from library import MAX_STEP_BYTES, STEP_SUFFIXES, catalog, glb_blob
 from make_samples import DEMO_SOURCE, SAMPLES, digest, write_json
+from paths import ROOT, WEB
 from search import retrieve, worker_pool
+from similarity import similarity_score
+from studio_data import StudioData
 
-LIBRARY = Path(os.environ.get("STEP_DEMO_LIBRARY", DEFAULT_LIBRARY)).resolve()
-QUERY_DIR = Path(os.environ.get("STEP_DEMO_QUERIES", ROOT / "data/queries")).resolve()
-MAX_UPLOAD = 32 * 1024 * 1024
+STUDIO = StudioData(os.environ["STEP_STUDIO_DATA"]) if "STEP_STUDIO_DATA" in os.environ else None
+LIBRARY = STUDIO.library if STUDIO else Path(os.environ.get("STEP_DEMO_LIBRARY", DEFAULT_LIBRARY)).resolve()
+QUERY_DIR = STUDIO.pending if STUDIO else Path(os.environ.get("STEP_DEMO_QUERIES", ROOT / "data/queries")).resolve()
+library_lock = Lock()
+archive_lock = Lock()
 logger = logging.getLogger("uvicorn.error")
 
 # The Windows registry may advertise JavaScript as text/plain.
@@ -51,26 +58,58 @@ def read_status(directory):
     return json.loads(status.read_text(encoding="utf-8"))
 
 
-def process(directory, record, annotation, pool, started):
+def process(directory, source_name, record, annotation, pool, started):
+    def progress(percent, text):
+        record.update(progress=percent, progress_text=text)
+        set_status(directory, record)
+
+    def indexing(done, total):
+        progress(17 + 9 * done // total, f"正在更新基础模型库（{done}/{total}）")
+
+    def comparison(done, total):
+        if total:
+            progress(30 + 60 * done // total, f"已完成 {done}/{total} 个候选模型的比对")
+        else:
+            progress(90, "基础模型库中暂无可比对的 STEP")
+
     try:
         parse_started = perf_counter()
-        source = (directory / "source.step").read_bytes()
+        progress(8, "正在解析 STEP 并生成三维网格")
+        source = (directory / source_name).read_bytes()
         mesh = read_step(source, record["query"]["file_name"])
         (directory / "query.glb").write_bytes(export_glb(mesh))
         parsing = perf_counter() - parse_started
         record["query"]["info"] = mesh.info
         record["query"]["glb"] = f"/api/queries/{record['id']}/model.glb"
         record["state"] = "comparing"
-        set_status(directory, record)
         retrieve_started = perf_counter()
-        outcome = retrieve(LIBRARY, mesh, pool, SETTINGS["coarse_k"], annotation,
-                           directory / "hole-samples.npz")
-        for entry in [*outcome["candidates"], *outcome["review"]]:
-            entry["glb"] = f"/api/queries/{record['id']}/models/{entry['id']}.glb"
-        result = {**record, **outcome, "state": "complete",
+        progress(16, "正在准备基础模型库")
+        with library_lock:
+            if STUDIO:
+                STUDIO.refresh_base(indexing)
+            progress(27, "正在筛选相似的基础模型")
+            outcome = retrieve(LIBRARY, mesh, pool, SETTINGS["coarse_k"], annotation,
+                               directory / "hole-samples.npz", comparison)
+            progress(95, "正在保存比对结果")
+            entries = [*outcome["candidates"], *outcome["review"]]
+            if STUDIO and entries:
+                (directory / "models").mkdir()
+            for entry in entries:
+                entry["glb"] = f"/api/queries/{record['id']}/models/{entry['id']}.glb"
+                if STUDIO:
+                    (directory / "models" / f"{entry['id']}.glb").write_bytes(glb_blob(LIBRARY, entry["id"]))
+        result = {**record, **outcome, "state": "complete", "progress": 100, "progress_text": "比对完成",
                   "timing": {"parse_seconds": parsing, "compare_seconds": perf_counter() - retrieve_started,
                              "total_seconds": perf_counter() - started}}
-        set_status(directory, result)
+        with archive_lock:
+            set_status(directory, result)
+            if STUDIO:
+                try:
+                    directory.rename(STUDIO.history / record["id"])
+                except OSError as exc:
+                    message = "无法将结果写入 Data/History"
+                    set_status(directory, {**record, "state": "failed", "reason": message})
+                    raise ValueError(message) from exc
     except Exception as exc:
         message = str(exc) if isinstance(exc, ValueError) else "本地几何处理失败，详细原因见服务日志"
         if not isinstance(exc, ValueError):
@@ -80,7 +119,9 @@ def process(directory, record, annotation, pool, started):
 
 @asynccontextmanager
 async def lifespan(app):
-    if not LIBRARY.is_file():
+    if STUDIO:
+        STUDIO.initialize()
+    elif not LIBRARY.is_file():
         raise RuntimeError("缺少 SQLite 历史库，请先执行 library.py 导入清单")
     QUERY_DIR.mkdir(parents=True, exist_ok=True)
     for directory in QUERY_DIR.iterdir():
@@ -118,72 +159,91 @@ async def local_resources(request, call_next):
 
 @app.get("/api/library")
 def get_library():
-    return catalog(LIBRARY)
+    with library_lock:
+        if STUDIO:
+            STUDIO.refresh_base()
+        return catalog(LIBRARY)
 
 
 @app.post("/api/queries", status_code=202)
 async def upload(file: UploadFile = File(...)):
     started = perf_counter()
     name = Path((file.filename or "").replace("\\", "/")).name
-    if Path(name).suffix.lower() not in (".step", ".stp"):
+    if Path(name).suffix.lower() not in STEP_SUFFIXES:
         raise HTTPException(415, "请选择 .step 或 .stp 文件")
-    if file.size is not None and file.size > MAX_UPLOAD:
+    if file.size is not None and file.size > MAX_STEP_BYTES:
         raise HTTPException(413, "STEP 文件超过 32 MB")
     query_id = uuid4().hex
     directory = QUERY_DIR / query_id
     directory.mkdir()
+    source_name = name if STUDIO and not os.path.isreserved(name) else "source.step"
+    incoming = directory / source_name
     size, sha256 = 0, hashlib.sha256()
     try:
-        with (directory / "source.step").open("wb") as output:
+        with incoming.open("wb") as output:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
-                if size > MAX_UPLOAD:
+                if size > MAX_STEP_BYTES:
                     raise HTTPException(413, "STEP 文件超过 32 MB")
                 sha256.update(chunk)
                 output.write(chunk)
         source_hash = sha256.hexdigest()
-        record = {"id": query_id, "state": "parsing", "query": {
+        record = {"id": query_id, "state": "parsing", "progress": 0,
+                  "progress_text": "等待处理上传的 STEP", "query": {
             "file_name": name, "sha256": source_hash,
             "source": DEMO_SOURCE if source_hash in app.state.demo_hashes else "上传文件",
         }}
         set_status(directory, record)
     except Exception:
         # Clean up only the two files created by this request before enqueueing it.
-        (directory / "source.step").unlink(missing_ok=True)
+        incoming.unlink(missing_ok=True)
         (directory / "status.tmp").unlink(missing_ok=True)
         directory.rmdir()
         raise
     finally:
         await file.close()
-    app.state.queue.submit(process, directory, record, app.state.annotations.get(source_hash),
+    app.state.queue.submit(process, directory, source_name, record, app.state.annotations.get(source_hash),
                            app.state.pool, started)
-    return {"id": query_id, "state": "parsing"}
+    return {"id": query_id, "state": "parsing", "progress": 0}
+
+
+def query_record(query_id):
+    with archive_lock:
+        directory = STUDIO.query_directory(query_id.hex) if STUDIO else QUERY_DIR / query_id.hex
+        return directory, read_status(directory)
 
 
 @app.get("/api/queries/{query_id}")
 def get_query(query_id: UUID):
-    return read_status(QUERY_DIR / query_id.hex)
+    _, record = query_record(query_id)
+    if record["state"] == "complete":
+        for entry in [*record["candidates"], *record["review"]]:
+            if "similarity" not in entry:
+                entry["similarity"] = similarity_score(record["query"]["info"], entry["info"], entry["alignment"])
+    return record
 
 
 @app.get("/api/queries/{query_id}/model.glb")
 def get_query_model(query_id: UUID):
-    directory = QUERY_DIR / query_id.hex
-    if not read_status(directory)["state"] == "complete":
+    directory, result = query_record(query_id)
+    if result["state"] != "complete":
         raise HTTPException(404, "查询模型尚不可查看")
     return FileResponse(directory / "query.glb", media_type="model/gltf-binary")
 
 
 @app.get("/api/queries/{query_id}/models/{model_id}.glb")
 def get_candidate_model(query_id: UUID, model_id: str):
-    result = read_status(QUERY_DIR / query_id.hex)
+    directory, result = query_record(query_id)
     if result["state"] != "complete" or not any(
         entry["id"] == model_id for entry in [*result["candidates"], *result["review"]]
     ):
         raise HTTPException(404, "此查询没有该候选模型")
+    if STUDIO:
+        return FileResponse(directory / "models" / f"{model_id}.glb", media_type="model/gltf-binary")
     glb = glb_blob(LIBRARY, model_id)
     if glb is None:
         raise HTTPException(404, "历史模型不存在")
     return Response(glb, media_type="model/gltf-binary")
 
 
-app.mount("/", StaticFiles(directory=ROOT / "dist", html=True), name="static")
+app.mount("/", StaticFiles(directory=WEB, html=True), name="static")

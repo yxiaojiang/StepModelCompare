@@ -15,7 +15,8 @@ from OCP.STEPControl import STEPControl_AsIs, STEPControl_Writer
 from OCP.TopAbs import TopAbs_SOLID
 from scipy.spatial.transform import Rotation
 
-from geometry import ROOT, entities
+from geometry import entities
+from paths import ROOT
 
 SAMPLES = ROOT / "samples"
 DEMO_SOURCE = "演示样例"

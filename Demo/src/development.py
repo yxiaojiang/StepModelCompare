@@ -6,13 +6,14 @@ from time import perf_counter
 import numpy as np
 
 from alignment import apply, compare
-from geometry import ROOT, Surface, export_glb, read_step
+from geometry import Surface, export_glb, read_step
 from make_samples import DEMO_SOURCE, SAMPLES, write_json
+from paths import WEB
 
 
 def run():
     source = SAMPLES / "development"
-    output = ROOT / "dist" / "development"
+    output = WEB / "development"
     output.mkdir(parents=True, exist_ok=True)
     cases = json.loads((source / "cases.json").read_text(encoding="utf-8"))
     models = {}

@@ -1,0 +1,83 @@
+{
+  "browser": "157.0.4341.60",
+  "installed": "D:\\TEmp\\StepModelCompare\\Demo\\release\\qa\\安装 验证",
+  "history": [
+    "665a71223b1a4c20a51bde9279a24ccb",
+    "6bcd7af4a6b54244ab98b2c6fdfce650",
+    "7a5d90d3ae0b437d9859f2bb1bfeb1da",
+    "85452c2ae6df424c8ef612e494ee8dc2",
+    "a101d2e74a6b4768b4ee4f666b293480"
+  ],
+  "progress_demo": [
+    0,
+    8,
+    30,
+    42,
+    54,
+    78,
+    100
+  ],
+  "progress_failure": [
+    0,
+    8
+  ],
+  "progress_base": [
+    0,
+    8,
+    30,
+    42,
+    54,
+    66,
+    78,
+    100
+  ],
+  "demo_query_id": "85452c2ae6df424c8ef612e494ee8dc2",
+  "failed_query_id": "b86c3c9e48d4495491117960fb72a220",
+  "custom_query_id": "a101d2e74a6b4768b4ee4f666b293480",
+  "custom_top": "用户 基础件/自定义 安装板.STP",
+  "cached_glb_sha256": "d9b54e84ae7b416c19ff017ca7b98063317865d27fe18d188d322b6cb923b85c",
+  "remote_requests": [],
+  "errors": [],
+  "hole": {
+    "region": {
+      "bounds_mm": [
+        [
+          13,
+          12,
+          -1
+        ],
+        [
+          32,
+          26,
+          11
+        ]
+      ],
+      "center_mm": [
+        22.5,
+        19,
+        10
+      ],
+      "size_mm": [
+        19,
+        14
+      ],
+      "view_mm": [
+        0,
+        0,
+        1
+      ],
+      "up_mm": [
+        0,
+        1,
+        0
+      ]
+    },
+    "counts": [
+      736,
+      737
+    ],
+    "max_mm": 4.996046279669968,
+    "status": "ok"
+  },
+  "server_stopped": true
+}

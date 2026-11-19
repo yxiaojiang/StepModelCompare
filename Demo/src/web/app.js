@@ -7,6 +7,9 @@ const status = $('#query-status');
 const candidates = $('#candidates');
 const reviewList = $('#review');
 const reviewGroup = $('#review-group');
+const progressDialog = $('#comparison-progress');
+const progressClose = $('#progress-close');
+const scoreDialog = $('#score-dialog');
 mountView(container);
 let viewer;
 try {
@@ -20,6 +23,25 @@ let operation = new AbortController();
 const statusLabels = {
   parsing: '解析中', comparing: '比对中', complete: '完成', failed: '失败',
 };
+
+progressDialog.addEventListener('cancel', event => {
+  if (progressClose.hidden) event.preventDefault();
+});
+
+function showProgress(percent, message) {
+  $('#progress-meter').value = percent;
+  $('#progress-percent').textContent = `${percent}%`;
+  const stage = $('#progress-stage');
+  if (stage.textContent !== message) stage.textContent = message;
+}
+
+function showProgressFailure(message) {
+  progressDialog.dataset.failed = 'true';
+  $('#progress-title').textContent = '比对失败';
+  $('#progress-stage').textContent = message;
+  progressClose.hidden = false;
+  progressClose.focus();
+}
 
 async function json(url, options) {
   const response = await fetch(url, options);
@@ -40,6 +62,7 @@ function setStatus(state, query, reason) {
 }
 
 function clearResults() {
+  if (scoreDialog.open) scoreDialog.close();
   viewer?.clear();
   candidates.replaceChildren();
   reviewList.replaceChildren();
@@ -61,16 +84,46 @@ function textLine(tag, content, className) {
   return line;
 }
 
+const scoreLabels = {
+  surface_rms: '表面 RMS', surface_p95: '表面 P95', surface_max: '最大表面偏差',
+  size: '主轴尺寸', area: '表面积', volume: '体积',
+};
+
+function showScore(item, modelLabel) {
+  const { score, parts } = item.similarity;
+  $('#score-model').textContent = modelLabel;
+  $('#score-total').textContent = score.toFixed(1);
+  const review = $('#score-review');
+  review.textContent = item.alignment.reason ? `待复核 · ${item.alignment.reason}` : '';
+  review.hidden = !item.alignment.reason;
+  const rows = Object.entries(parts).map(([key, part]) => {
+    const surface = key.startsWith('surface_');
+    const row = document.createElement('tr');
+    const heading = textLine('th', scoreLabels[key]);
+    heading.scope = 'row';
+    row.append(heading,
+      textLine('td', surface ? `${part.error.toFixed(3)} mm` : `${(part.error * 100).toFixed(2)}%`),
+      textLine('td', `${part.points.toFixed(2)} / ${part.weight}`),
+      textLine('td', surface ? `${part.zero_at} mm` : `${part.zero_at * 100}%`));
+    return row;
+  });
+  $('#score-body').replaceChildren(...rows);
+  scoreDialog.showModal();
+}
+
 function candidateRow(item, data, signal) {
   const entry = document.createElement('li');
   const button = document.createElement('button');
+  button.className = 'candidate-select';
   button.type = 'button';
   button.dataset.model = item.id;
   button.setAttribute('aria-pressed', 'false');
   const alignment = item.alignment;
   const { old_to_new, new_to_old } = alignment.overall;
   const delta = alignment.size_delta_mm.map(value => value.toFixed(2)).join(' / ');
-  button.append(textLine('strong', item.id), textLine('span', `修订 ${item.revision} · ${item.source}`, 'info'),
+  const modelLabel = item.source === '基础模型' ? item.file_name : item.id;
+  button.append(textLine('strong', modelLabel, 'candidate-heading'),
+    textLine('span', `修订 ${item.revision} · ${item.source}`, 'info'),
     textLine('span', `主轴尺寸差 ${delta} mm`, 'info'),
     textLine('span', `整体 RMS 新→旧 ${new_to_old.rms_mm.toFixed(3)} / 旧→新 ${old_to_new.rms_mm.toFixed(3)} mm`, 'info'));
   if (alignment.reason) button.append(textLine('span', alignment.reason, 'review-reason'));
@@ -82,7 +135,7 @@ function candidateRow(item, data, signal) {
     if (!viewer) return;
     try {
       const newModel = { ...data.query.info, glb: data.query.glb, label: data.query.file_name };
-      const oldModel = { ...item.info, glb: item.glb, label: `${item.id} · 修订 ${item.revision}` };
+      const oldModel = { ...item.info, glb: item.glb, label: `${modelLabel} · 修订 ${item.revision}` };
       const ready = await viewer.load(newModel, oldModel, alignment);
       if (ready && !signal.aborted) {
         container.dataset.queryId = data.id;
@@ -93,6 +146,17 @@ function candidateRow(item, data, signal) {
     }
   });
   entry.append(button);
+  if (item.similarity) {
+    const score = `${item.similarity.score.toFixed(1)} / 100`;
+    const details = textLine('button', '', 'score-detail-button');
+    details.type = 'button';
+    details.setAttribute('aria-haspopup', 'dialog');
+    details.setAttribute('aria-controls', 'score-dialog');
+    details.setAttribute('aria-label', `查看 ${modelLabel} 的评分详情，相似度 ${score}`);
+    details.append(textLine('span', score, 'similarity-score'), textLine('span', '详情', 'score-link'));
+    details.addEventListener('click', () => showScore(item, modelLabel));
+    entry.append(details);
+  }
   return entry;
 }
 
@@ -106,7 +170,7 @@ function showResponse(data, signal) {
   hint.hidden = data.candidates.length > 0;
   hint.textContent = '没有满足对齐检查的候选。';
   if (!data.candidates.length && data.review.length) reviewGroup.open = true;
-  (candidates.querySelector('button') || reviewList.querySelector('button'))?.click();
+  (candidates.querySelector('.candidate-select') || reviewList.querySelector('.candidate-select'))?.click();
 }
 
 function waitForPoll(signal) {
@@ -133,6 +197,12 @@ $('#upload').addEventListener('change', async event => {
   const { signal } = operation;
   clearResults();
   setStatus('parsing', { file_name: file.name });
+  delete progressDialog.dataset.failed;
+  progressClose.hidden = true;
+  $('#progress-title').textContent = '正在比对 STEP';
+  $('#progress-file').textContent = file.name;
+  showProgress(0, '正在提交文件');
+  if (!progressDialog.open) progressDialog.showModal();
   const form = new FormData();
   form.append('file', file);
   try {
@@ -141,12 +211,17 @@ $('#upload').addEventListener('change', async event => {
       const data = await json(`/api/queries/${accepted.id}`, { signal });
       if (signal.aborted) return;
       setStatus(data.state, data.query, data.reason);
+      showProgress(data.progress ?? 0, data.progress_text ?? statusLabels[data.state]);
       if (data.state === 'complete') {
         showResponse(data, signal);
+        // Let the completed bar paint before dismissing the modal.
+        await new Promise(resolve => setTimeout(resolve, 300));
+        if (!signal.aborted) progressDialog.close();
         return;
       }
       if (data.state === 'failed') {
         $('#result-hint').textContent = '请重新选择 STEP 文件。';
+        showProgressFailure(data.reason);
         return;
       }
       await waitForPoll(signal);
@@ -155,6 +230,7 @@ $('#upload').addEventListener('change', async event => {
     if (signal.aborted) return;
     setStatus('failed', null, error.message);
     $('#result-hint').textContent = '请重新选择 STEP 文件。';
+    showProgressFailure(error.message);
   }
 });
 
@@ -176,6 +252,6 @@ $('#open-library').addEventListener('click', async () => {
     $('#library-count').textContent = entries.length;
     $('#library-status').textContent = '';
   } catch (error) {
-    $('#library-status').textContent = `历史库读取失败 · ${error.message}`;
+    $('#library-status').textContent = `基础模型库读取失败 · ${error.message}`;
   }
 });

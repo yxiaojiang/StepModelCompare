@@ -8,3 +8,4 @@ __pycache__/
 .env.*
 /Demo/data/*
 !/Demo/data/library.sqlite3
+/Demo/release/

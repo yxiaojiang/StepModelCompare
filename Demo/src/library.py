@@ -11,9 +11,12 @@ from time import perf_counter
 
 import numpy as np
 
-from geometry import ROOT, SETTINGS, export_glb, read_step
+from geometry import SETTINGS, export_glb, read_step
+from paths import ROOT
 
 LIBRARY = ROOT / "data/library.sqlite3"
+MAX_STEP_BYTES = 32 * 1024 * 1024
+STEP_SUFFIXES = {".step", ".stp"}
 SCHEMA = """CREATE TABLE IF NOT EXISTS models (
     id TEXT PRIMARY KEY, file_name TEXT NOT NULL, source TEXT NOT NULL, part_number TEXT,
     revision TEXT, sha256 TEXT, step BLOB, info TEXT, mesh BLOB, glb BLOB, error TEXT,
@@ -26,6 +29,30 @@ def connect(database, read_only=True):
     db = sqlite3.connect(location, uri=read_only)
     db.row_factory = sqlite3.Row
     return db
+
+
+def prepare_model(path):
+    step = sha256 = info = mesh_blob = glb = error = None
+    try:
+        step = path.read_bytes()
+        sha256 = hashlib.sha256(step).hexdigest()
+        mesh = read_step(step, path.name)
+        info = mesh.info
+        mesh_blob, glb = mesh.packed(), export_glb(mesh)
+    except (OSError, RuntimeError, ValueError) as exc:
+        error = str(exc)
+    return sha256, step, info, mesh_blob, glb, error
+
+
+def save_model(db, item, file_name, prepared):
+    sha256, step, info, mesh_blob, glb, error = prepared
+    db.execute("""INSERT INTO models VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET file_name=excluded.file_name, source=excluded.source,
+        part_number=excluded.part_number, revision=excluded.revision, sha256=excluded.sha256,
+        step=excluded.step, info=excluded.info, mesh=excluded.mesh, glb=excluded.glb, error=excluded.error""", (
+            item["id"], file_name, item["source"], item.get("part_number"), item.get("revision"),
+            sha256, step, json.dumps(info) if info else None, mesh_blob, glb, error,
+        ))
 
 
 def import_catalog(manifest, database):
@@ -43,22 +70,9 @@ def import_catalog(manifest, database):
             if not path.is_relative_to(root):
                 raise ValueError("清单中的 STEP 路径必须位于清单目录内")
             started = perf_counter()
-            step = sha256 = info = mesh_blob = glb = error = None
-            try:
-                step = path.read_bytes()
-                sha256 = hashlib.sha256(step).hexdigest()
-                mesh = read_step(step, path.name)
-                info = mesh.info
-                mesh_blob, glb = mesh.packed(), export_glb(mesh)
-            except (OSError, RuntimeError, ValueError) as exc:
-                error = str(exc)
-            db.execute("""INSERT INTO models VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET file_name=excluded.file_name, source=excluded.source,
-                part_number=excluded.part_number, revision=excluded.revision, sha256=excluded.sha256,
-                step=excluded.step, info=excluded.info, mesh=excluded.mesh, glb=excluded.glb, error=excluded.error""", (
-                    item["id"], path.name, item["source"], item.get("part_number"), item.get("revision"),
-                    sha256, step, json.dumps(info) if info else None, mesh_blob, glb, error,
-                ))
+            prepared = prepare_model(path)
+            save_model(db, item, path.name, prepared)
+            sha256, _, info, _, _, error = prepared
             imported.append({"id": item["id"], "file": path.name, "sha256": sha256, "info": info,
                              "error": error, "seconds": perf_counter() - started})
     return imported

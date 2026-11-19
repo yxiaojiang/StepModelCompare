@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 from playwright.sync_api import sync_playwright
 
-from geometry import ROOT
 from make_samples import write_json
+from paths import ROOT, WEB
 
 EVIDENCE = ROOT / "evidence"
 EDGE = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / (
@@ -114,7 +114,7 @@ def check_saved_hole(path, hole):
 
 def check_development(url):
     EVIDENCE.mkdir(exist_ok=True)
-    data_dir = ROOT / "dist/development"
+    data_dir = WEB / "development"
     cases = json.loads((data_dir / "results.json").read_text(encoding="utf-8"))["cases"]
     by_id = {item["id"]: item for item in cases}
     errors = []

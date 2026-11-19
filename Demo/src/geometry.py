@@ -4,7 +4,6 @@ import io
 import json
 import struct
 from dataclasses import dataclass
-from pathlib import Path
 
 import igl
 import numpy as np
@@ -21,8 +20,9 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS
 
-ROOT = Path(__file__).resolve().parent
-SETTINGS = json.loads((ROOT / "settings.json").read_text(encoding="utf-8"))
+from paths import SOURCE
+
+SETTINGS = json.loads((SOURCE / "settings.json").read_text(encoding="utf-8"))
 if not (SETTINGS["dedup_angle_deg"] < SETTINGS["ambiguity_angle_deg"]
         and SETTINGS["dedup_center_mm"] < SETTINGS["ambiguity_center_mm"]):
     raise ValueError("姿态去重容差必须严于歧义阈值")
