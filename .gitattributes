@@ -1,0 +1,2 @@
+# Preserve the exact byte sequences recorded in the Demo freeze manifest.
+Demo/** -text
