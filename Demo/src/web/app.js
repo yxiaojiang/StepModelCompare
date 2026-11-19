@@ -110,19 +110,35 @@ function showScore(item, modelLabel) {
 
 function candidateRow(item, data, signal) {
   const entry = document.createElement('li');
+  entry.className = 'result-card';
   const button = document.createElement('button');
   button.className = 'candidate-select';
   button.type = 'button';
   button.dataset.model = item.id;
   button.setAttribute('aria-pressed', 'false');
   const alignment = item.alignment;
-  const { old_to_new, new_to_old } = alignment.overall;
-  const delta = alignment.size_delta_mm.map(value => value.toFixed(2)).join(' / ');
   const modelLabel = item.source === '基础模型' ? item.file_name : item.id;
-  button.append(textLine('strong', modelLabel, 'candidate-heading'),
-    textLine('span', `主轴尺寸差 ${delta} mm`, 'info'),
-    textLine('span', `整体 RMS 新→旧 ${new_to_old.rms_mm.toFixed(3)} / 旧→新 ${old_to_new.rms_mm.toFixed(3)} mm`, 'info'));
-  if (alignment.reason) button.append(textLine('span', alignment.reason, 'review-reason'));
+  const heading = document.createElement('span');
+  heading.className = 'candidate-heading-row';
+  heading.append(textLine('strong', modelLabel, 'candidate-heading'));
+  if (alignment.reason) heading.append(textLine('span', '待复核', 'review-status'));
+  button.append(heading);
+  if (item.similarity) {
+    const score = `${item.similarity.score.toFixed(1)} / 100`;
+    const scoreLine = document.createElement('span');
+    scoreLine.className = 'score-line';
+    scoreLine.append(textLine('span', '相似度', 'similarity-label'), textLine('span', score, 'similarity-score'));
+    button.append(scoreLine);
+    const details = textLine('button', '详情', 'score-detail-button');
+    details.type = 'button';
+    details.setAttribute('aria-haspopup', 'dialog');
+    details.setAttribute('aria-controls', 'score-dialog');
+    details.setAttribute('aria-label', `查看 ${modelLabel} 的评分详情，相似度 ${score}`);
+    details.addEventListener('click', () => showScore(item, modelLabel));
+    entry.append(button, details);
+  } else {
+    entry.append(button);
+  }
   button.addEventListener('click', async () => {
     container.querySelector('.empty-view').textContent = '正在加载模型…';
     document.querySelectorAll('.model-list button[aria-pressed="true"]').forEach(old => old.setAttribute('aria-pressed', 'false'));
@@ -141,18 +157,9 @@ function candidateRow(item, data, signal) {
       container.querySelector('.empty-view').textContent = `模型加载失败 · ${error.message}`;
     }
   });
-  entry.append(button);
-  if (item.similarity) {
-    const score = `${item.similarity.score.toFixed(1)} / 100`;
-    const details = textLine('button', '', 'score-detail-button');
-    details.type = 'button';
-    details.setAttribute('aria-haspopup', 'dialog');
-    details.setAttribute('aria-controls', 'score-dialog');
-    details.setAttribute('aria-label', `查看 ${modelLabel} 的评分详情，相似度 ${score}`);
-    details.append(textLine('span', score, 'similarity-score'), textLine('span', '详情', 'score-link'));
-    details.addEventListener('click', () => showScore(item, modelLabel));
-    entry.append(details);
-  }
+  entry.addEventListener('click', event => {
+    if (event.target === entry) button.click();
+  });
   return entry;
 }
 
@@ -233,23 +240,93 @@ $('#upload').addEventListener('change', async event => {
 });
 
 const dialog = $('#library');
-$('#open-library').addEventListener('click', async () => {
-  dialog.showModal();
-  $('#library-count').textContent = '';
-  $('#library-status').textContent = '正在读取…';
+const libraryLoadDialog = $('#library-load-progress');
+const libraryLoadClose = $('#library-load-close');
+let libraryLoad = new AbortController();
+
+export function shouldShowLibraryLoadProgress(data) {
+  return data.state === 'waiting' || data.state === 'scanning' || data.state === 'indexing' || data.state === 'failed';
+}
+
+function renderLibraryRows(entries) {
   $('#library-body').replaceChildren();
+  for (const row of entries) {
+    const cells = [row.id, row.file_name, row.part_number || '未知', row.error || '有效'];
+    const tr = document.createElement('tr');
+    cells.forEach(value => tr.append(textLine('td', value)));
+    $('#library-body').append(tr);
+  }
+  $('#library-count').textContent = entries.length;
+}
+
+function openLibraryTable(data) {
+  closeLibraryLoadProgress();
+  renderLibraryRows(data.entries || []);
+  $('#library-status').textContent = (data.entries || []).length ? '' : '基础模型库中暂无 STEP 模型。';
+  dialog.setAttribute('aria-busy', 'false');
+  if (!dialog.open) dialog.showModal();
+}
+
+function closeLibraryLoadProgress() {
+  libraryLoadDialog.removeAttribute('data-active');
+  libraryLoadDialog.removeAttribute('data-failed');
+  if (libraryLoadDialog.open) libraryLoadDialog.close();
+}
+
+function showLibraryLoadProgress(data) {
+  const percent = $('#library-load-percent');
+  const file = $('#library-load-file');
+  const meter = $('#library-load-meter');
+  const active = data.state === 'waiting' || data.state === 'scanning' || data.state === 'indexing';
+  const failed = data.state === 'failed';
+  libraryLoadDialog.toggleAttribute('data-active', active);
+  libraryLoadDialog.toggleAttribute('data-failed', failed);
+  libraryLoadClose.hidden = !failed;
+  if (data.total == null) {
+    percent.textContent = '--';
+    meter.removeAttribute('value');
+  } else {
+    const value = data.percent == null ? (data.total === 0 ? 100 : Math.round(((data.done ?? 0) / data.total) * 100)) : data.percent;
+    percent.textContent = `${value}%`;
+    meter.max = 100;
+    meter.value = value;
+  }
+  if (failed) {
+    file.textContent = data.reason
+      ? `基础模型库读取失败 · ${data.reason}`
+      : (data.text || '基础模型库读取失败');
+  } else {
+    file.textContent = data.current || (data.total == null ? '正在扫描' : '');
+  }
+  if (!libraryLoadDialog.open) libraryLoadDialog.showModal();
+}
+
+libraryLoadDialog.addEventListener('cancel', event => {
+  if (libraryLoadClose.hidden) event.preventDefault();
+});
+libraryLoadDialog.addEventListener('close', () => libraryLoad.abort());
+dialog.addEventListener('close', () => libraryLoad.abort());
+
+$('#open-library').addEventListener('click', async () => {
+  libraryLoad.abort();
+  libraryLoad = new AbortController();
+  const { signal } = libraryLoad;
   try {
-    const entries = await json('/api/library');
-    for (const row of entries) {
-      const cells = [row.id, row.file_name, row.part_number || '未知', row.error || '有效'];
-      const tr = document.createElement('tr');
-      cells.forEach(value => tr.append(textLine('td', value)));
-      $('#library-body').append(tr);
+    let data = await json('/api/library/refresh', { method: 'POST', signal });
+    while (!signal.aborted) {
+      if (data.state === 'complete') {
+        openLibraryTable(data);
+        return;
+      }
+      if (shouldShowLibraryLoadProgress(data)) showLibraryLoadProgress(data);
+      if (data.state === 'failed') return;
+      await waitForPoll(signal);
+      if (signal.aborted) return;
+      data = await json('/api/library', { signal });
     }
-    $('#library-count').textContent = entries.length;
-    $('#library-status').textContent = '';
   } catch (error) {
-    $('#library-status').textContent = `基础模型库读取失败 · ${error.message}`;
+    if (signal.aborted) return;
+    showLibraryLoadProgress({ state: 'failed', done: 0, total: null, reason: error.message, text: `基础模型库读取失败 · ${error.message}` });
   }
 });
 
@@ -258,7 +335,7 @@ $('#open-library-folder').addEventListener('click', async event => {
   button.disabled = true;
   try {
     await json('/api/library-folder', { method: 'POST' });
-    $('#library-status').textContent = '已打开基础模型库文件夹';
+    $('#library-status').textContent = '';
   } catch (error) {
     $('#library-status').textContent = `无法打开基础模型库文件夹 · ${error.message}`;
   } finally {

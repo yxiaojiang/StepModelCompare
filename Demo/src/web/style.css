@@ -82,32 +82,79 @@ button:disabled, select:disabled, input:disabled { opacity: .45; }
 #query-status { color: var(--accent); font-size: 14px; }
 #query-status[data-state="failed"] { color: #ffb4a9; }
 .workbench-grid { display: grid; grid-template-columns: minmax(252px, 310px) minmax(0, 1fr); align-items: start; gap: 16px; }
-.results { padding: 14px; }
+.results { padding: 14px; container-type: inline-size; container-name: results; }
 .results h2 { margin-bottom: 10px; }
 #candidate-count, #review-count, #library-count { font-variant-numeric: tabular-nums; color: var(--accent); margin-left: 4px; }
 .results details { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
 .results summary { cursor: pointer; color: #ffc891; font-size: 14px; }
-.model-list { padding: 0; list-style: none; margin: 0; }
-.model-list li { margin-top: 8px; position: relative; }
-.candidate-select { width: 100%; display: grid; gap: 3px; text-align: left; min-height: 66px; padding: 8px 9px; }
-.candidate-select[aria-pressed="true"] { border-color: var(--accent); background: #153047; }
-.candidate-heading { overflow-wrap: anywhere; line-height: 24px; }
-.model-list li:has(.score-detail-button) .candidate-heading { padding-inline-end: 8.8rem; }
-.score-detail-button {
-  position: absolute; inset-block-start: 5px; inset-inline-end: 6px;
-  display: flex; align-items: center; gap: 5px;
-  min-height: 29px; padding: 3px 6px; font-size: .8rem;
+.results details[open] summary { margin-bottom: 10px; }
+.model-list { display: grid; gap: 10px; padding: 0; list-style: none; margin: 0; }
+.result-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #3d5068;
+  border-radius: 5px;
+  background: #1a293c;
+  cursor: pointer;
 }
-.score-link { color: var(--muted); white-space: nowrap; }
+.result-card:hover { border-color: #7f93ab; }
+.result-card:has(.candidate-select[aria-pressed="true"]) {
+  border-color: var(--accent);
+  background: #153047;
+}
+.candidate-select {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.candidate-select:hover:not(:disabled) { border-color: transparent; }
+.candidate-heading-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.candidate-heading { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
+.review-status { flex: 0 0 auto; color: #ffc891; line-height: 1.45; white-space: nowrap; }
+.score-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+  line-height: 1.45;
+}
+.similarity-label { color: var(--muted); }
 .similarity-score { color: var(--accent); font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.similarity-score::before { content: "相似度 "; color: var(--muted); font-size: .75em; font-weight: 400; }
-.model-list .info, .review-reason { font-size: 12px; line-height: 1.4; }
-.model-list .info { color: var(--muted); }
-.review-reason { color: #ffc891; }
-.boundary { padding: 15px 0 4px; color: var(--muted); font-size: 13px; }
+.score-detail-button { align-self: end; white-space: nowrap; }
+/* 结果栏更窄时，「详情」仍留在分数行右侧，名称使用整行宽度。 */
+@container results (max-width: 250px) {
+  .result-card { display: block; position: relative; }
+  .candidate-select { width: 100%; }
+  .score-line { align-items: center; min-height: 36px; padding-inline-end: 5rem; }
+  .score-detail-button { position: absolute; inset-inline-end: 12px; inset-block-end: 12px; }
+}
+@container results (min-width: 420px) {
+  .result-card { grid-template-columns: minmax(0, max-content) auto; justify-content: start; }
+}
+.review-reason { color: #ffc891; font-size: 12px; line-height: 1.4; }
 dialog { background: var(--card); color: inherit; border: 1px solid var(--line); border-radius: 8px; width: min(860px, 95vw); padding: 18px; }
 dialog::backdrop { background: #06101ac7; }
-#comparison-progress {
+#comparison-progress,
+#library-load-progress {
   width: min(462px, calc(100vw - 32px));
   border-color: #3d5873;
   padding: 24px;
@@ -115,9 +162,12 @@ dialog::backdrop { background: #06101ac7; }
 }
 .progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .progress-heading h2 { font-size: 19px; }
-#progress-percent { color: var(--accent); font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
-#progress-file { margin-top: 8px; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
-#progress-meter {
+#progress-percent,
+#library-load-percent { color: var(--accent); font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#progress-file,
+#library-load-file { margin-top: 8px; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; min-height: 1.2em; }
+#progress-meter,
+#library-load-meter {
   display: block;
   width: 100%;
   height: 10px;
@@ -128,28 +178,41 @@ dialog::backdrop { background: #06101ac7; }
   overflow: hidden;
   background: #233449;
 }
-#progress-meter::-webkit-progress-bar { background: #233449; }
-#progress-meter::-webkit-progress-value { background: #20b957; transition: width .2s ease; }
-#comparison-progress[data-active] #progress-meter::-webkit-progress-value {
+#progress-meter::-webkit-progress-bar,
+#library-load-meter::-webkit-progress-bar { background: #233449; }
+#progress-meter::-webkit-progress-value,
+#library-load-meter::-webkit-progress-value { background: #20b957; transition: width .2s ease; }
+#comparison-progress[data-active] #progress-meter::-webkit-progress-value,
+#library-load-progress[data-active] #library-load-meter::-webkit-progress-value {
+  background: repeating-linear-gradient(135deg, #169c45 0 10px, #25cf60 10px 20px);
+  background-size: 28px 28px;
+  animation: progress-stripes .75s linear infinite;
+}
+#library-load-progress[data-active] #library-load-meter:not([value]) {
   background: repeating-linear-gradient(135deg, #169c45 0 10px, #25cf60 10px 20px);
   background-size: 28px 28px;
   animation: progress-stripes .75s linear infinite;
 }
 @keyframes progress-stripes { to { background-position: 28px 0; } }
 @media (prefers-reduced-motion: reduce) {
-  #comparison-progress[data-active] #progress-meter::-webkit-progress-value { animation: none; }
+  #comparison-progress[data-active] #progress-meter::-webkit-progress-value,
+  #library-load-progress[data-active] #library-load-meter::-webkit-progress-value,
+  #library-load-progress[data-active] #library-load-meter:not([value]) { animation: none; }
 }
 #progress-stage { color: #dbe6f2; min-height: 20px; font-size: 14px; }
 #comparison-progress[data-failed] #progress-stage { color: #ffb4a9; }
+#library-load-progress[data-failed] #library-load-file { color: #ffb4a9; }
 .progress-actions { display: flex; justify-content: flex-end; }
 .progress-actions button { margin-top: 14px; }
 .dialog-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .dialog-actions { display: flex; align-items: center; gap: 8px; }
+#library-status:empty { display: none; }
 #score-dialog {
   width: min(610px, 95vw);
   max-height: 61.34dvh;
-  transform: scale(1.5);
+  transform: scale(1.2);
   transform-origin: center;
+  overflow: auto;
 }
 .score-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
 .score-summary strong { overflow-wrap: anywhere; }
@@ -170,7 +233,7 @@ th { background: #18263a; position: sticky; top: 0; }
   .workbench-grid { grid-template-columns: minmax(210px, 240px) minmax(0, 1fr); }
 }
 @media (max-width: 1100px) {
-  #score-dialog { max-height: 76.67dvh; transform: scale(1.2); }
+  #score-dialog { width: min(586px, 95vw); max-height: 73.6dvh; transform: none; }
 }
 @media (max-width: 650px) {
   .top { padding: 16px; }
@@ -181,5 +244,5 @@ th { background: #18263a; position: sticky; top: 0; }
   .panes { flex-direction: column; }
 }
 @media (max-width: 760px) {
-  #score-dialog { max-height: 92dvh; transform: none; }
+  #score-dialog { width: min(488px, 95vw); max-height: 73.6dvh; transform: none; }
 }

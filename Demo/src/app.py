@@ -18,11 +18,12 @@ from fastapi.staticfiles import StaticFiles
 
 from geometry import SETTINGS, export_glb, read_step
 from library import LIBRARY as DEFAULT_LIBRARY
-from library import MAX_STEP_BYTES, STEP_SUFFIXES, catalog, glb_blob
+from library import MAX_STEP_BYTES, STEP_SUFFIXES, glb_blob
 from make_samples import DEMO_SOURCE, SAMPLES, digest, write_json
 from paths import ROOT, WEB
 from search import retrieve, worker_pool
 from similarity import similarity_score
+from library_loader import LibraryLoader
 from studio_data import StudioData
 
 STUDIO = StudioData(os.environ["STEP_STUDIO_DATA"]) if "STEP_STUDIO_DATA" in os.environ else None
@@ -63,8 +64,13 @@ def process(directory, source_name, record, annotation, pool, started):
         record.update(progress=percent, progress_text=text)
         set_status(directory, record)
 
-    def indexing(done, total):
-        progress(17 + 9 * done // total, f"正在更新基础模型库（{done}/{total}）")
+    def indexing(done, total, current=""):
+        if total:
+            current_hint = f" · {current}" if current else ""
+            progress(17 + 9 * done // total, f"正在更新基础模型库（{done}/{total}）{current_hint}")
+        else:
+            found = f"（已找到 {done} 个）" if done else ""
+            progress(16, f"正在扫描基础模型库{found}")
 
     def comparison(done, total):
         if total:
@@ -137,9 +143,14 @@ async def lifespan(app):
         app.state.annotations = {item["sha256"]: item for item in cases if "hole" in item}
     app.state.demo_hashes = {digest(path) for path in SAMPLES.rglob("*")
                              if path.is_file() and path.suffix.lower() in (".step", ".stp")}
-    with worker_pool() as pool, ThreadPoolExecutor(max_workers=1) as queue:
-        app.state.pool, app.state.queue = pool, queue
-        yield
+    loader = LibraryLoader(studio=STUDIO, database=LIBRARY, work_lock=library_lock)
+    app.state.library_loader = loader
+    try:
+        with worker_pool() as pool, ThreadPoolExecutor(max_workers=1) as queue:
+            app.state.pool, app.state.queue = pool, queue
+            yield
+    finally:
+        loader.close()
 
 
 app = FastAPI(title="STEP 相似检索", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -152,17 +163,19 @@ async def local_resources(request, call_next):
         "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
         "connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; frame-ancestors 'none'"
     )
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith("/api/") or request.url.path.endswith((".html", ".js", ".css")) or request.url.path in ("", "/"):
         response.headers["Cache-Control"] = "no-store"
     return response
 
 
 @app.get("/api/library")
 def get_library():
-    with library_lock:
-        if STUDIO:
-            STUDIO.refresh_base()
-        return catalog(LIBRARY)
+    return app.state.library_loader.current(start_if_idle=True)
+
+
+@app.post("/api/library/refresh")
+def refresh_library():
+    return app.state.library_loader.start()
 
 
 @app.get("/api/library-folder")

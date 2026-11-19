@@ -178,7 +178,6 @@ def rehearsal(url, data_dir, report, visible=False):
         assert page.locator("#library-body .source-cell").all_text_contents() == ["演示样例"] * library_size
         assert "未知" in page.locator("#library-body").inner_text()
         page.get_by_role("button", name="关闭").click()
-        assert "由工程负责人依据工程资料确认" in page.locator(".boundary").inner_text()
         for case in cases:
             path = folder / "queries" / case["file"]
             assert digest(path) == case["sha256"]

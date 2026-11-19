@@ -9,17 +9,94 @@ import subprocess
 import sys
 from pathlib import Path
 
-import OCP
-
 SOURCE = Path(__file__).resolve().parents[1]
 DEMO = SOURCE.parent
 RELEASE = DEMO / "release"
 WEBVIEW_INSTALLER = "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
 BUNDLE = RELEASE / "bundle" / "Studio"
+STAGING_DIST = RELEASE / "bundle-staging"
 BASE = RELEASE / "demo-base"
+DATA_DIR_NAME = "Data"
+PUBLISH_PREFIX = ".studio-publish-"
+
+
+def _is_data_path(path):
+    return path.name.casefold() == DATA_DIR_NAME.casefold()
+
+
+def _is_publish_temp(path):
+    return path.name.startswith(PUBLISH_PREFIX)
+
+
+def _remove(path):
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _replace_item(src, dest):
+    """Replace dest with a copy of src, without touching sibling Data.
+
+    The new copy is written to a temporary name first. The previous item is
+    renamed aside only after that copy succeeds. If the final swap fails, the
+    previous item is restored when possible; otherwise the backup path is kept
+    and included in the error.
+    """
+    parent = dest.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    token = f"{os.getpid()}-{os.urandom(4).hex()}"
+    tmp = parent / f"{PUBLISH_PREFIX}new-{dest.name}-{token}"
+    bak = parent / f"{PUBLISH_PREFIX}old-{dest.name}-{token}"
+    _remove(tmp)
+    _remove(bak)
+    try:
+        if src.is_dir():
+            shutil.copytree(src, tmp, symlinks=True)
+        else:
+            shutil.copy2(src, tmp)
+        if dest.exists() or dest.is_symlink():
+            dest.rename(bak)
+        try:
+            tmp.rename(dest)
+        except BaseException:
+            if not dest.exists() and bak.exists():
+                try:
+                    bak.rename(dest)
+                except BaseException as restore_error:
+                    raise RuntimeError(
+                        f"Failed to publish {dest}. The previous item was left at {bak}."
+                    ) from restore_error
+            raise
+        _remove(bak)
+    except BaseException:
+        raise
+
+
+def publish_studio_bundle(built, dest):
+    """Install a PyInstaller onedir build into dest without modifying dest/Data."""
+    built = Path(built).resolve()
+    dest = Path(dest).resolve()
+    if not (built / "Studio.exe").is_file():
+        raise RuntimeError(f"Studio build is missing Studio.exe: {built}")
+    dest.mkdir(parents=True, exist_ok=True)
+    built_names = {item.name for item in built.iterdir() if not _is_data_path(item)}
+    for item in list(dest.iterdir()):
+        if _is_data_path(item) or _is_publish_temp(item):
+            continue
+        if item.name not in built_names:
+            _remove(item)
+    for item in built.iterdir():
+        if _is_data_path(item) or _is_publish_temp(item):
+            continue
+        _replace_item(item, dest / item.name)
 
 
 def compile_studio():
+    import OCP
+
     work = RELEASE / "build"
     work.mkdir(parents=True, exist_ok=True)
     samples = DEMO / "samples"
@@ -37,21 +114,34 @@ def compile_studio():
     metadata_path = work / "demo-models.json"
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
 
+    # PyInstaller --noconfirm --onedir deletes the entire dist/<name> directory,
+    # including any Studio/Data next to the executable. Build into a staging
+    # tree, then publish program files onto the real bundle and leave Data alone.
+    if STAGING_DIST.exists():
+        shutil.rmtree(STAGING_DIST)
+    STAGING_DIST.mkdir(parents=True, exist_ok=True)
     ocp_dlls = Path(OCP.__file__).resolve().parent.parent / "cadquery_ocp_novtk.libs"
-    subprocess.run([
-        sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed", "--noupx",
-        "--name", "Studio", "--paths", str(SOURCE), "--workpath", str(work), "--specpath", str(work),
-        "--distpath", str(RELEASE / "bundle"),
-        "--add-data", f"{SOURCE / 'web'};web", "--add-data", f"{SOURCE / 'settings.json'};.",
-        "--add-data", f"{samples / 'rehearsal'};samples/rehearsal",
-        "--add-data", f"{metadata_path};.",
-        "--add-binary", f"{ocp_dlls / '*.dll'};{ocp_dlls.name}",
-        "--collect-data", "webview", "--hidden-import", "webview.platforms.winforms",
-        "--hidden-import", "webview.platforms.edgechromium", "--hidden-import", "clr",
-        "--hidden-import", "uvicorn.loops.asyncio", "--hidden-import", "uvicorn.protocols.http.h11_impl",
-        "--hidden-import", "uvicorn.lifespan.on", "--copy-metadata", "cadquery-ocp-novtk",
-        str(SOURCE / "studio.py")
-    ], check=True)
+    try:
+        subprocess.run([
+            sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed", "--noupx",
+            "--name", "Studio", "--paths", str(SOURCE), "--workpath", str(work), "--specpath", str(work),
+            "--distpath", str(STAGING_DIST),
+            "--add-data", f"{SOURCE / 'web'};web", "--add-data", f"{SOURCE / 'settings.json'};.",
+            "--add-data", f"{samples / 'rehearsal'};samples/rehearsal",
+            "--add-data", f"{metadata_path};.",
+            "--add-binary", f"{ocp_dlls / '*.dll'};{ocp_dlls.name}",
+            "--collect-data", "webview", "--hidden-import", "webview.platforms.winforms",
+            "--hidden-import", "webview.platforms.edgechromium", "--hidden-import", "clr",
+            "--hidden-import", "uvicorn.loops.asyncio", "--hidden-import", "uvicorn.protocols.http.h11_impl",
+            "--hidden-import", "uvicorn.lifespan.on", "--copy-metadata", "cadquery-ocp-novtk",
+            str(SOURCE / "studio.py")
+        ], check=True)
+        publish_studio_bundle(STAGING_DIST / "Studio", BUNDLE)
+    except BaseException:
+        # Keep the staging tree for diagnosis. BUNDLE/Data was not used as a
+        # scratch directory. The next compile removes leftover staging first.
+        raise
+    shutil.rmtree(STAGING_DIST)
     print(f"Compiled Studio executable: {BUNDLE / 'Studio.exe'}")
 
 
