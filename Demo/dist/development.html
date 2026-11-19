@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STEP 开发样例验证</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">{"imports":{"three":"./vendor/build/three.module.min.js","three/addons/":"./vendor/examples/jsm/"}}</script>
+</head>
+<body>
+  <header class="top"><h1>STEP 开发样例验证</h1><span class="tag">演示样例</span></header>
+  <main class="dev">
+    <section class="card dev-control">
+      <label>验证样例 <select id="case"></select></label>
+      <output id="state" role="status"></output>
+    </section>
+    <section id="viewer" class="card viewer" aria-label="三维对比"></section>
+  </main>
+  <script type="module" src="./development.js"></script>
+</body>
+</html>

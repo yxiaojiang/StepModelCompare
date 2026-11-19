@@ -1,0 +1,109 @@
+[
+  {
+    "id": "pose",
+    "file": "SHOW-POSE-INCH.step",
+    "sha256": "32f3145f66a254dd5f21f73f384831e9b64a5647da45f55c09e944deb42d20d5",
+    "target": "SHOW-P01",
+    "state": "aligned",
+    "references": {
+      "old_mm": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          152,
+          0,
+          0
+        ],
+        [
+          0,
+          94,
+          0
+        ]
+      ],
+      "new_mm": [
+        [
+          -49.0,
+          94.0,
+          57.0
+        ],
+        [
+          26.171785084182815,
+          195.18029472363668,
+          -27.945574851756973
+        ],
+        [
+          -130.5768985845827,
+          126.23415879794172,
+          23.204014677630965
+        ]
+      ],
+      "length_mm": 152.0
+    },
+    "max_error_mm": 0.15,
+    "max_rms_mm": 0.05,
+    "known_change": "绕 (-2, 1, 3) 轴旋转 73°，平移 (-49, 94, 57) mm，英寸 STEP"
+  },
+  {
+    "id": "hole",
+    "file": "SHOW-HOLE.step",
+    "sha256": "db8f47d3765864d47afd5795f19104f25c9740e8cd1171ba0e467f14237a0618",
+    "target": "SHOW-H01",
+    "state": "aligned",
+    "hole": {
+      "bounds_mm": [
+        [
+          13,
+          12,
+          -1
+        ],
+        [
+          32,
+          26,
+          11
+        ]
+      ],
+      "center_mm": [
+        22.5,
+        19,
+        10
+      ],
+      "size_mm": [
+        19,
+        14
+      ],
+      "view_mm": [
+        0,
+        0,
+        1
+      ],
+      "up_mm": [
+        0,
+        1,
+        0
+      ]
+    },
+    "hole_range_mm": [
+      4.5,
+      5.4
+    ],
+    "known_change": "直径 10 mm 通孔沿 +X 平移 5 mm"
+  },
+  {
+    "id": "symmetric",
+    "file": "SHOW-SYMMETRIC.step",
+    "sha256": "f248d7e27ee91f6b611494535e1e216dd93ab43beeaeeca206355bde86af7c40",
+    "review_target": "SHOW-S01",
+    "state": "ambiguous",
+    "known_change": "中心对称孔组，整体另行旋转和平移"
+  },
+  {
+    "id": "damaged",
+    "file": "SHOW-DAMAGED.stp",
+    "sha256": "2862874b7e85c59dc6110ee2b7b01b0a7b363d6fec277f1016fdb5279b514714",
+    "state": "failed",
+    "known_change": "故意损坏的 .stp"
+  }
+]

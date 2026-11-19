@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STEP 相似检索</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="importmap">{"imports":{"three":"./vendor/build/three.module.min.js","three/addons/":"./vendor/examples/jsm/"}}</script>
+</head>
+<body>
+  <header class="top app-top">
+    <h1>STEP 相似检索</h1>
+    <button id="open-library" type="button">历史库</button>
+  </header>
+  <main class="workbench">
+    <section class="card upload">
+      <div class="upload-label">
+        <label for="upload" class="upload-button">上传 STEP</label>
+        <input id="upload" class="sr-only" type="file" accept=".step,.stp">
+        <span class="hint">.step / .stp · 最大 32 MB</span>
+      </div>
+      <div class="query-label">
+        <span id="query-name"></span>
+        <span id="query-source" class="tag" hidden></span>
+      </div>
+      <output id="query-status" role="status" aria-live="polite" data-state="idle">等待上传</output>
+    </section>
+    <div class="workbench-grid">
+      <aside class="card results" aria-label="检索结果">
+        <h2>几何候选 <span id="candidate-count"></span></h2>
+        <p id="result-hint" class="hint">上传后显示最多 5 个候选。</p>
+        <ol id="candidates" class="model-list"></ol>
+        <details id="review-group" hidden>
+          <summary>待复核 <span id="review-count"></span></summary>
+          <ul id="review" class="model-list"></ul>
+        </details>
+      </aside>
+      <section id="viewer" class="card viewer" aria-label="三维对比"></section>
+    </div>
+    <p class="boundary">结果仅供几何比对。旧件能否采用，由工程负责人依据工程资料确认。</p>
+  </main>
+  <dialog id="library">
+    <div class="dialog-head">
+      <h2>历史库 <span id="library-count"></span></h2>
+      <form method="dialog"><button type="submit">关闭</button></form>
+    </div>
+    <div id="library-status" role="status"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>模型标识</th><th>文件</th><th>料号</th><th>修订</th><th>来源</th><th>导入</th></tr></thead>
+        <tbody id="library-body"></tbody>
+      </table>
+    </div>
+  </dialog>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

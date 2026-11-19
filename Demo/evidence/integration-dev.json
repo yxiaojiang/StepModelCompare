@@ -1,0 +1,129 @@
+{
+  "file": "DEV-POSE-INCH.step",
+  "query_id": "d8f8904b938b46498552c479d99c5e92",
+  "state": "complete",
+  "ui_seconds": 15.716268599993782,
+  "timing": {
+    "parse_seconds": 0.056337099995289464,
+    "compare_seconds": 15.289931199993589,
+    "total_seconds": 15.348348300001817
+  },
+  "top5": [
+    "DEV-BASE",
+    "DEV-VARIANT-01",
+    "DEV-VARIANT-02",
+    "DEV-VARIANT-03"
+  ],
+  "query_info": {
+    "step_units": [
+      "INCH"
+    ],
+    "calculation_unit": "mm",
+    "geometry": "有效闭合单实体",
+    "size_mm": [
+      137.27840969150122,
+      90.49325347860042,
+      12.258519785229083
+    ],
+    "area_mm2": 25889.070720969874,
+    "volume_mm3": 115526.70389934556,
+    "centroid_mm": [
+      142.57048480315152,
+      -19.84055732149951,
+      68.65612461211273
+    ],
+    "principal_axes": [
+      [
+        0.5014309767438613,
+        0.5887170293905346,
+        0.6340183237630295
+      ],
+      [
+        -0.26345879727542987,
+        0.8018972520970595,
+        -0.5362371296519564
+      ],
+      [
+        -0.8241094816223637,
+        0.10184820265851302,
+        0.5571988028660412
+      ]
+    ],
+    "cad_to_scene": [
+      [
+        0.001,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0.001,
+        0
+      ],
+      [
+        0,
+        -0.001,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        1
+      ]
+    ],
+    "triangles": 1296
+  },
+  "coarse_order": [
+    "DEV-BASE",
+    "DEV-VARIANT-01",
+    "DEV-VARIANT-02",
+    "DEV-VARIANT-03",
+    "DEV-VARIANT-04",
+    "PLATE-018",
+    "PLATE-019",
+    "PLATE-013",
+    "PLATE-024",
+    "PLATE-023",
+    "PLATE-014",
+    "PLATE-010",
+    "PLATE-027",
+    "PLATE-025",
+    "PLATE-005",
+    "PLATE-017",
+    "PLATE-012",
+    "PLATE-020",
+    "PLATE-015",
+    "PLATE-026",
+    "PLATE-021",
+    "PLATE-028",
+    "PLATE-009",
+    "PLATE-004",
+    "DEV-SYMMETRIC",
+    "PLATE-022",
+    "PLATE-007",
+    "PLATE-011",
+    "PLATE-008",
+    "PLATE-003",
+    "PLATE-016",
+    "PLATE-006",
+    "PLATE-002",
+    "PLATE-001"
+  ],
+  "fine_order": [
+    "DEV-BASE",
+    "DEV-VARIANT-01",
+    "DEV-VARIANT-02",
+    "DEV-VARIANT-03"
+  ],
+  "review": {
+    "DEV-VARIANT-04": "failed"
+  },
+  "library_errors": [],
+  "first_switch": 0.11184050000156276,
+  "second_switch": 0.11242829999537207,
+  "retained_import_error": "bad.stp：OCCT 无法读取 STEP，文件可能损坏"
+}

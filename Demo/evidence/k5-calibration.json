@@ -1,0 +1,55 @@
+[
+  {
+    "case": "pose",
+    "k": 5,
+    "target": "DEV-BASE",
+    "coarse_rank": 1,
+    "target_rank": 1,
+    "target_review": null,
+    "displayed": [
+      "DEV-BASE",
+      "DEV-VARIANT-01",
+      "DEV-VARIANT-02",
+      "DEV-VARIANT-03"
+    ],
+    "review": {
+      "DEV-VARIANT-04": "failed"
+    },
+    "seconds": 19.716664400002628
+  },
+  {
+    "case": "hole",
+    "k": 5,
+    "target": "DEV-BASE",
+    "coarse_rank": 1,
+    "target_rank": 1,
+    "target_review": null,
+    "displayed": [
+      "DEV-BASE",
+      "DEV-VARIANT-01",
+      "DEV-VARIANT-02",
+      "DEV-VARIANT-03"
+    ],
+    "review": {
+      "DEV-VARIANT-04": "failed"
+    },
+    "seconds": 14.260058800005936
+  },
+  {
+    "case": "symmetric",
+    "k": 5,
+    "target": "DEV-SYMMETRIC",
+    "coarse_rank": 1,
+    "target_rank": null,
+    "target_review": "ambiguous",
+    "displayed": [],
+    "review": {
+      "DEV-SYMMETRIC": "ambiguous",
+      "PLATE-017": "failed",
+      "PLATE-012": "failed",
+      "PLATE-022": "failed",
+      "PLATE-011": "failed"
+    },
+    "seconds": 12.918171599994821
+  }
+]

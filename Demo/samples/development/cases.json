@@ -1,0 +1,96 @@
+[
+  {
+    "id": "pose",
+    "new": "DEV-POSE-INCH",
+    "old": "DEV-BASE",
+    "state": "aligned",
+    "references": {
+      "old_mm": [
+        [
+          0,
+          0,
+          0
+        ],
+        [
+          130,
+          0,
+          0
+        ],
+        [
+          0,
+          80,
+          0
+        ]
+      ],
+      "new_mm": [
+        [
+          83.0,
+          -37.0,
+          109.0
+        ],
+        [
+          155.5260859684715,
+          -60.87047428338779,
+          3.785137401695934
+        ],
+        [
+          125.98437262068344,
+          28.852575007623756,
+          123.68952263593094
+        ]
+      ],
+      "length_mm": 130.0
+    },
+    "max_error_mm": 0.15,
+    "max_rms_mm": 0.05
+  },
+  {
+    "id": "hole",
+    "new": "DEV-HOLE",
+    "old": "DEV-BASE",
+    "state": "aligned",
+    "hole": {
+      "bounds_mm": [
+        [
+          13,
+          11,
+          -1
+        ],
+        [
+          35,
+          27,
+          13
+        ]
+      ],
+      "center_mm": [
+        24.0,
+        19,
+        12
+      ],
+      "size_mm": [
+        22,
+        16
+      ],
+      "view_mm": [
+        0,
+        0,
+        1
+      ],
+      "up_mm": [
+        0,
+        1,
+        0
+      ]
+    },
+    "hole_range_mm": [
+      5.5,
+      6.3
+    ]
+  },
+  {
+    "id": "symmetric",
+    "new": "DEV-SYMMETRIC-POSE",
+    "old": "DEV-SYMMETRIC",
+    "state": "ambiguous"
+  }
+]

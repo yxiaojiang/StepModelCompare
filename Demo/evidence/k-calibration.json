@@ -1,0 +1,112 @@
+[
+  {
+    "case": "pose",
+    "k": 4,
+    "target": "DEV-BASE",
+    "coarse_rank": 1,
+    "target_rank": 1,
+    "target_review": null,
+    "displayed": [
+      "DEV-BASE",
+      "DEV-VARIANT-01",
+      "DEV-VARIANT-02",
+      "DEV-VARIANT-03"
+    ],
+    "review": {},
+    "seconds": 15.18954279999889
+  },
+  {
+    "case": "pose",
+    "k": 8,
+    "target": "DEV-BASE",
+    "coarse_rank": 1,
+    "target_rank": 1,
+    "target_review": null,
+    "displayed": [
+      "DEV-BASE",
+      "DEV-VARIANT-01",
+      "DEV-VARIANT-02",
+      "DEV-VARIANT-03"
+    ],
+    "review": {
+      "DEV-VARIANT-04": "failed",
+      "PLATE-018": "failed",
+      "PLATE-019": "failed",
+      "PLATE-013": "failed"
+    },
+    "seconds": 31.256974800002354
+  },
+  {
+    "case": "hole",
+    "k": 4,
+    "target": "DEV-BASE",
+    "coarse_rank": 1,
+    "target_rank": 1,
+    "target_review": null,
+    "displayed": [
+      "DEV-BASE",
+      "DEV-VARIANT-01",
+      "DEV-VARIANT-02",
+      "DEV-VARIANT-03"
+    ],
+    "review": {},
+    "seconds": 11.057848600001307
+  },
+  {
+    "case": "hole",
+    "k": 8,
+    "target": "DEV-BASE",
+    "coarse_rank": 1,
+    "target_rank": 1,
+    "target_review": null,
+    "displayed": [
+      "DEV-BASE",
+      "DEV-VARIANT-01",
+      "DEV-VARIANT-02",
+      "DEV-VARIANT-03"
+    ],
+    "review": {
+      "DEV-VARIANT-04": "failed",
+      "PLATE-018": "failed",
+      "PLATE-019": "failed",
+      "PLATE-013": "failed"
+    },
+    "seconds": 20.78476850000152
+  },
+  {
+    "case": "symmetric",
+    "k": 4,
+    "target": "DEV-SYMMETRIC",
+    "coarse_rank": 1,
+    "target_rank": null,
+    "target_review": "ambiguous",
+    "displayed": [],
+    "review": {
+      "DEV-SYMMETRIC": "ambiguous",
+      "PLATE-017": "failed",
+      "PLATE-012": "failed",
+      "PLATE-022": "failed"
+    },
+    "seconds": 9.302810299996054
+  },
+  {
+    "case": "symmetric",
+    "k": 8,
+    "target": "DEV-SYMMETRIC",
+    "coarse_rank": 1,
+    "target_rank": null,
+    "target_review": "ambiguous",
+    "displayed": [],
+    "review": {
+      "DEV-SYMMETRIC": "ambiguous",
+      "PLATE-017": "failed",
+      "PLATE-012": "failed",
+      "PLATE-022": "failed",
+      "PLATE-011": "failed",
+      "PLATE-007": "failed",
+      "PLATE-009": "failed",
+      "PLATE-004": "failed"
+    },
+    "seconds": 19.39359980000154
+  }
+]
