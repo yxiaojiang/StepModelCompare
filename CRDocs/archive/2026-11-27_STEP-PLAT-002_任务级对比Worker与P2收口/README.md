@@ -1,6 +1,6 @@
 # 执行者–审核者代码协作机制（CRDocs）
 
-`CRDocs` 是 `StepModelCompare` 正式平台（`Platform/`）开发阶段中，执行者（Executor）与独立审核者（Reviewer）的长期代码审查交接面。开始代码开发或审查前，必须读取本文件、`RULES.md`、`STATUS.md`、`REVIEW.md`、`IMPLEMENTATION.md` 和 `DEFERRED.md`。历史审核不在活动文件中无限追加，统一通过 [`archive/INDEX.md`](archive/INDEX.md) 查找。
+`CRDocs` 是 `StepModelCompare` 正式平台（`Platform/`）开发阶段中，执行者（Executor）与独立审核者（Reviewer）的长期代码审查交接面。开始代码开发或审查前，必须读取本文件、`RULES.md`、`STATUS.md`、`REVIEW.md`、`IMPLEMENTATION.md` 和 `DEFERRED.md`。历史审核不在活动文件中无限追加，统一通过 [`archive/INDEX.md`](../INDEX.md) 查找。
 
 ## 活动区与归档区
 
@@ -18,7 +18,7 @@
 
 1. 在活动文件新增第 4 轮之前（或切换至新任务前），先把最旧的一轮（或旧任务）完整内容移入新建归档目录；不得直接删除或覆盖历史。
 2. 归档目录命名为 `YYYY-MM-DD_<任务或阶段>_<审核内容概要>`，例如 `2026-12-01_STEP-PLAT-001_后端骨架与OCCT进程池收口`。
-3. 归档目录内必须有 `INDEX.md`，列出任务编号、轮次、结论、日期、原始文件和检索关键词；根目录 [`archive/INDEX.md`](archive/INDEX.md) 必须同步增加入口。
+3. 归档目录内必须有 `INDEX.md`，列出任务编号、轮次、结论、日期、原始文件和检索关键词；根目录 [`archive/INDEX.md`](../INDEX.md) 必须同步增加入口。
 4. 活动区只保留可直接指导下一步的内容。历史问题、原始命令输出和完整逐项证据以归档文件为准；活动文件通过相对链接指向归档，不复制整段历史。
 5. 归档后检查活动区行数、链接、状态和 `git diff --check`。不得因压缩历史而改变审核结论、问题 ID、延期条件或验证边界。
 
