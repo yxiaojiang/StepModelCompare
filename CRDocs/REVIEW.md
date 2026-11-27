@@ -1,5 +1,3 @@
 # 独立代码审核记录
 
-> 本文件只保留当前任务最近 3 轮独立审核结论（最新在前）。超过 3 轮或切换任务前须先按 [`README.md`](README.md) 归档至 `archive/`。
-
-暂无记录（待 `STEP-PLAT-001` 送审后由独立审核者写入）。
+当前无活动记录。[STEP-PLAT-002 归档](archive/2026-11-27_STEP-PLAT-002_任务级对比Worker与P2收口/REVIEW.md)。

@@ -18,7 +18,7 @@
 
 ## 文档事实源
 
-- 决策历史及未决假设：`PlanDocs/DECISIONS.md`（归档位于 `PlanDocs/STEP-SIM-001` 至 `STEP-SIM-004`）。
+- 决策历史及未决假设：`PlanDocs/DECISIONS.md`（归档位于 `PlanDocs/STEP-SIM-001` 至 `STEP-SIM-005`）。
 - 当前正式平台开发基线：`Docs/STEP模型相似度对比与检索系统详细开发设计文档.md`、`Docs/STEP模型相似度对比与检索系统详细开发计划.md`（`.claude/Plan.md` 只保留当前 1–3 项待推进工作）。
 - OCCT 与几何计算依赖：`Demo/.venv` 为 `cadquery-ocp-novtk 8.0.1.1.0`（导入名 `OCP`，非 `pythonocc-core`）+ `numpy` + `scipy` + `libigl`（导入名 `igl`，非 `trimesh`）。
 - 对客标准与报价：`Docs/STEP模型相似度评判逻辑与判断标准说明.md`、`Docs/STEP模型相似度对比与检索系统开发报价单.xlsx`。
