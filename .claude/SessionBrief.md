@@ -1,28 +1,26 @@
 # 当前项目状态
 
 ## 项目目标
-面向客户已有的千件级 STEP 历史库，判断某个新设计是否可由满足本次工程要求的已发布旧件修订直接替代。几何相似度负责缩小和排序候选，不直接等同于可替代；最终建议必须有几何、功能接口、工况、版本和成熟资料证据，并由工程负责人确认。
+当前正式开发主线已进入 `STEP-SIM-004`（ADOPTED）：面向客户看 Demo 后的正式建设需求，交付支持多企业数据隔离、可配置 `D1–D7` 多维相似度规则、五态人工确认防刷入库、Web 三维图形化对比检查及客户端双 API 的 STEP 模型相似度对比与检索服务平台（商务报价 92 人/天 × ¥2,895 = ¥266,340，双人并行规划 10–12 周）。相似度分数仅用于检索排序与差异定位，不单独等同于工程直接替代放行。
 
 ## 当前已定口径
-- **近期交付。** STEP-SIM-003 Demo 已更新为简体中文 Windows Studio 0.3.1。候选和待复核模型可点击分数旁的「详情」查看六项误差、得分及标准。源码集中于 `Demo/src`，`Demo/Tools` 提供编译和打包入口。基础件从 `Data/Base` 读取，完成查询写入 `Data/History`。当前工作分支为 `test1`（相对 Demo 合并点 `d626c196bb3de4d45ca994ac261ba418e027004e`，含安装 `Data/test` 种子与比对进度修复）。PR #1 已合并进 Demo；旧分支 `cursor/result-list-layout-e93d` 已删除，不要恢复。
-- **安装包中的 Data/test。** 用户已确认用先前安装包全新安装后，`Data/test` 存在且可用。种子来自已入库的 `Demo/samples/rehearsal/queries` 的 5 个 STEP（与桌面 queries 哈希一致），不作为 Base 自动导入，也不写入 History。升级时已有同名文件不覆盖（Inno `onlyifdoesntexist`）。Compile 只向缺失的 `Data/test` 文件补种，不覆盖已有 Data，也不把运行中的 History/.cache 打进安装包。
-- **SHOW-HOLE 比对失败已修，待用户用新包确认。** 用户实测先前安装包（2026-11-19 17:09）时，用 `Data/test/SHOW-HOLE.step` 比对，界面显示「比对失败 0%」和 JSON 解析错误。只读日志显示后台比对已完成并写入 History，但轮询 `GET /api/queries/{id}` 因 `AttributeError: 'StudioData' object has no attribute 'query_directory'` 返回纯文本 500。该方法在 `14d1150` 重写 `studio_data.py` 时被漏掉。源码已恢复 `query_directory`；未处理异常改为 JSON 错误（不泄露路径或堆栈）；前端对非 JSON / 非 2xx 显示可理解错误。临时 Data 上真实上传 SHOW-HOLE 并轮询至完成的 HTTP 测试已通过。含此修复的安装包为 `Demo/release/installer/StepModelCompare-Studio-Setup-0.3.1-x64.exe`（0.3.1，2026-11-19 17:24:23，Asia/Singapore UTC+8）。用户尚未明确确认安装该新包后比对通过，不能写成已实机验收。`SHOW-DAMAGED.stp` 仍是故意损坏样例，不应要求比对成功。
-- **正式项目。** STEP-SIM-002 仍是业务与试点基线。正式方案及汇报材料位于 Docs/。
-- **讨论状态。** PlanDocs 已收口至 IDLE，最近采纳决定为 STEP-SIM-003。
+- **STEP-SIM-004 已采纳并归档**：Neon 第 2 轮复审 `CONVERGED`，用户已确认采纳收口；决定已写入 `PlanDocs/DECISIONS.md`，提案与历轮审核归档至 `PlanDocs/STEP-SIM-004/`，`PlanDocs/STATUS.md` 已重置为 `IDLE`。
+- **正式开发基线就绪**：详细开发设计文档已落盘 [STEP模型相似度对比与检索系统详细开发设计文档.md](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md)，四阶段详细开发计划已写入 [Plan.md](Plan.md)；两份对客文档（相似度标准说明 MD、已清脏数据并写入 19 处公式缓存值的 ¥266,340 报价单 Excel）与开发文档口径完全一致。
+- **与前序决定衔接**：本次平台建设不再将 `STEP-SIM-002` 的“必填工程替代需求单、自动三档替代结论、60 正例历史盲测及回收期前置测算”作为前置阻塞；保留“相似度不单独替代工程确认”、`STEP-SIM-003` 已验证几何内核及失败/截断/待复核计入验收分母底线；`STEP-SIM-002` 原基线实施方案与 PPT 暂不覆写。
+- **历史 Demo 状态**：`STEP-SIM-003` Windows Studio 0.3.1 位于 `Demo/`（工作分支 `test1`，含 `Data/test` 与比对进度 500 修复包 `17:24`），正式平台将在独立 `Platform/` 目录开发，不破坏 `Demo/`。
 
-## 未决前提
-- **Demo。** 客户 STEP 尚未提供，现场响应和整机断网复跑待验证。缺少 WebView2 的目标机补装流程待验证。修复后的比对与先前界面改动，待用户关闭当前 Studio 并安装 17:24 的新包后确认。
-- **正式试点。** 待确认需求单真实试填、设计时点证据和盲测正例规模，以及预计建议率、可接受误推荐风险上界、待核定和待复核合计人工核查上限。
+## 未决前提（阶段 1 签认冻结）
+- 客户真实历史 `.stp` 样本盘点（AP203/214 vs AP242 分布、PMI 与材料填写率、单/多闭合实体与开壳/装配体占比、单文件体积上限）。
+- 单方缺失默认计分策略（默认 0 分保守计分）、待审队列审核角色粒度（系统管理员 vs 企业管理员）、无邀请码自助注册防刷门槛、公共演示库来源及规则按全局/按企业作用域。
+- 客户端调用形态、并发规模、Top-1/Top-N 返回与选中回传契约、部署服务器环境清单；工程实现时须保证预占超时回收阈值严于“排队上限 + OCCT 单件解析硬超时”。
+- 报价单 Excel 对外发送前由用户在桌面 Excel 打开预览确认跨页打印版式；Demo 17:24 修复包如仍需演示待实机确认。
 
 ## 最近交付索引
-- [当前计划](Plan.md) · [Demo 模块记忆](contexts/07-customer-demo.md)
-- [Demo 启动与操作](../Demo/README.md) · [冻结彩排](../Demo/evidence/03-rehearsal.md)
-- [Studio 中文安装与评分验证](../Demo/evidence/05-studio-similarity.md)
-- [Studio 评分详情核验](../Demo/evidence/06-score-details.md)
-- [GitHub Demo 分支](https://github.com/yxiaojiang/StepModelCompare/tree/Demo)
-- [决定记录](../PlanDocs/DECISIONS.md) · [Demo 定稿与审核](../PlanDocs/STEP-SIM-003/STATUS.md)
-- [正式实施方案](../Docs/STEP模型相似检索与历史数据复用实施方案.md) · [正式客户汇报](../Docs/STEP模型检索与历史数据复用_客户汇报.pptx)
+- [详细开发计划](Plan.md) · [多企业平台模块记忆](contexts/08-similarity-platform.md) · [Demo 模块记忆](contexts/07-customer-demo.md)
+- [详细开发设计文档](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md)
+- [相似度评判逻辑与标准说明](../Docs/STEP模型相似度评判逻辑与判断标准说明.md) · [系统开发报价单（¥266,340）](../Docs/STEP模型相似度对比与检索系统开发报价单.xlsx)
+- [决定记录](../PlanDocs/DECISIONS.md) · [STEP-SIM-004 归档](../PlanDocs/STEP-SIM-004/STATUS.md) · [STEP-SIM-003 归档](../PlanDocs/STEP-SIM-003/STATUS.md)
 
 ## 下一步
-
-请用户自行关闭正在运行的 Studio 后，安装 `Demo/release/installer/StepModelCompare-Studio-Setup-0.3.1-x64.exe`（2026-11-19 17:24:23），再用 `Data/test` 中的 SHOW-HOLE 等正常模型复核比对。不要把尚未确认的比对或视觉写成已通过。再按 [当前计划](Plan.md) 做现场环境复核。
+1. 按分支整理建议将当前 `test1` 合并至 `main`（打标签保留 `demo-v0.3.1`），从 `main` 切出正式平台开发分支（如 `feat/platform-v1`）。
+2. 在桌面 Excel 预览确认报价单版式后发给客户，启动 [Plan.md](Plan.md) 阶段 1（收集客户 20–50 件真实 `.stp` 样本并签认冻结参数）。

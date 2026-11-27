@@ -22,5 +22,6 @@
 | 05-blind-test-and-acceptance.md | 正反例标注、盲测、风险上界、建议率和人工复核负担 | 待阶段 1 前提签认；口径见 DECISIONS 中 STEP-SIM-002 |
 | 06-pilot-and-platform.md | 离线原型、基础试点、平台增量投入和扩展条件 | 尚未启动；平台是通过试点门槛后的可选项 |
 | [07-customer-demo.md](07-customer-demo.md) | 客户 Demo 的范围、对齐、评分、中文安装版与彩排 | 工作分支 test1。用户已确认 `Data/test` 安装成功。比对进度 500 已修，17:24 修复包已生成；用户尚未确认新包比对通过，Studio 实机视觉未复核 |
+| [08-similarity-platform.md](08-similarity-platform.md) | 正式多企业 STEP 相似度对比与检索平台（STEP-SIM-004，规划目录 `Platform/`） | 已采纳定稿；详细开发设计文档与四阶段计划已就绪，待切分支并启动阶段 1 样本盘点与契约冻结 |
 
 具体模块工作开始后再创建对应文件，避免空白占位文档。模块划分、文件名可随实际交付调整，并同步更新本索引。
