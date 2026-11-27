@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     max_batch_files: PositiveInt = 50
     max_brep_faces: PositiveInt = ParseLimits.max_brep_faces
     max_mesh_triangles: PositiveInt = ParseLimits.max_mesh_triangles
+    # 保留首版配置兼容。在线读取与切换以数据库的全局指针为准。
     active_feature_version: str = Field(default="1.0.0", min_length=1, max_length=32)
     occt_parse_timeout: float = Field(default=30, gt=0, le=60)
     occt_memory_limit_mb: PositiveInt = ParseLimits.occt_memory_limit_mb

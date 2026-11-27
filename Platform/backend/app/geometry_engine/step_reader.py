@@ -1,5 +1,6 @@
 """在隔离进程中读取 STEP/XDE 和三角网格。依赖 OCP 与 NumPy，模型坐标统一为毫米。"""
 
+from collections import Counter
 import io
 from pathlib import Path
 import re
@@ -15,30 +16,43 @@ from OCP.IFSelect import IFSelect_RetDone
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.STEPConstruct import STEPConstruct_ExternRefs
 from OCP.TCollection import TCollection_ExtendedString
-from OCP.TDataStd import TDataStd_TreeNode
-from OCP.TDF import TDF_AttributeIterator
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED, TopAbs_SHELL, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS
-from OCP.XCAFDoc import (
-    XCAFDoc, XCAFDoc_Datum, XCAFDoc_Dimension, XCAFDoc_DocumentTool,
-    XCAFDoc_GeomTolerance, XCAFDoc_Material, XCAFDoc_ShapeTool,
-)
+from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ShapeTool
 
+from app.geometry_engine.feature_versions import INITIAL_FEATURE_VERSION, require_feature_version
+from app.geometry_engine.features_d1_d4 import (
+    extract_basic, extract_pmi, extract_surfaces, extract_volume, material_entries, pmi_objects,
+)
+from app.geometry_engine.features_d6_d7 import extract_holes, extract_obb
+from app.geometry_engine.mesh_artifacts import CAD_TO_SCENE, write_glb, write_surface_samples
 from app.geometry_engine.step_input import ParseLimits, StepError, validate_step_file
 
 _MESH_DEFLECTION_MM = 0.1
 _MESH_ANGLE_RAD = 0.35
 
 
-def read_step(path: Path, limits: ParseLimits, mesh_path: Path | None = None) -> dict:
+def read_step(
+    path: Path, limits: ParseLimits, mesh_path: Path | None = None, *,
+    feature_version: str | None = None, glb_path: Path | None = None, original_filename: str | None = None,
+    registered_material: str | None = None,
+) -> dict:
     """用 XDE 读取 path，按 limits 熔断，返回协议、单位、属性、拓扑和耗时。
 
     mesh_path 由进程池提供，指定时尝试生成网格并记录网格诊断。无效文件或面数超限抛 StepError，
+    指定 feature_version 时从同一份 B-Rep 生成特征和必需采样网格，可同时写入 glb_path。
+    original_filename 和 registered_material 分别表示原件名与台账材料。缺少网格路径或版本未知时抛 ValueError，
     未知原生异常交给进程池隔离并重建。
     """
+    if glb_path is not None and feature_version is None:
+        raise ValueError("导出 GLB 时必须指定特征版本")
+    if feature_version is not None:
+        require_feature_version(feature_version)
+        if mesh_path is None:
+            raise ValueError("提取特征时必须指定网格路径")
     started = perf_counter()
     payload = validate_step_file(path, limits.max_file_size_bytes, read_payload=True)
     reader = STEPCAFControl_Reader()
@@ -73,6 +87,8 @@ def read_step(path: Path, limits: ParseLimits, mesh_path: Path | None = None) ->
         raise StepError("ERR_STEP_NO_GEOMETRY")
     raw_faces = _count_faces(shape, limits.max_brep_faces)
     topology = _topology(shape)
+    pmi = extract_pmi(label) if feature_version is not None else None
+    counts = pmi["semantic_counts"] if pmi is not None else Counter(kind for kind, _ in pmi_objects(label))
     result = {
         "schemas": schemas,
         "protocols": protocols,
@@ -82,6 +98,7 @@ def read_step(path: Path, limits: ParseLimits, mesh_path: Path | None = None) ->
         "is_assembly": any(XCAFDoc_ShapeTool.IsAssembly_s(root) for root in roots),
         **topology,
         **_xde_summary(label),
+        "semantic_pmi": {kind: counts.get(kind, 0) for kind in ("dimensions", "geometric_tolerances", "datums")},
         "raw_face_count": raw_faces,
         "occt_parse_seconds": perf_counter() - started,
         "mesh_triangles": None,
@@ -90,12 +107,50 @@ def read_step(path: Path, limits: ParseLimits, mesh_path: Path | None = None) ->
     if mesh_path is not None:
         started = perf_counter()
         try:
-            result["mesh_triangles"] = _write_mesh(shape, mesh_path, limits.max_mesh_triangles)
+            vertices, faces = _mesh_arrays(shape, limits.max_mesh_triangles)
+            if feature_version is None:
+                np.savez(mesh_path, vertices=vertices, faces=faces)
+            else:
+                write_surface_samples(mesh_path, vertices, faces)
+            result["mesh_triangles"] = len(faces)
         except StepError as error:
+            if feature_version is not None:
+                raise
             # 盘点仍需保留已读到的协议和拓扑，网格失败单列并跳过 ICP。
             result["mesh_error"] = error.code
         result["occt_mesh_seconds"] = perf_counter() - started
+    if glb_path is not None:
+        write_glb(glb_path, vertices, faces)
+    if feature_version is not None:
+        extract = _FEATURE_EXTRACTORS[feature_version]
+        result["feature_payload"] = extract(
+            shape, label, result, pmi, original_filename or path.name, registered_material,
+        )
     return result
+
+
+def _features_v1(shape, label, parsed, pmi, filename, registered_material) -> dict:
+    volume, solid_props = extract_volume(shape, parsed)
+    surface, patches, groups, surface_props = extract_surfaces(shape)
+    obb = extract_obb(shape, solid_props if solid_props is not None else surface_props)
+    holes = extract_holes(patches, groups)
+    unit_codes = {"millimetre": "MM", "millimeter": "MM", "inch": "INCH", "metre": "M", "meter": "M"}
+    units = parsed["source_units"]
+    distinct = {unit_codes.get(unit.casefold(), unit.upper()) for unit in units}
+    unit = next(iter(distinct)) if len(distinct) == 1 else ("MIXED" if distinct else "UNKNOWN")
+    return {
+        "feature_version": INITIAL_FEATURE_VERSION, "unit_source": unit, "source_units": units,
+        "topology": {
+            **{key: parsed[key] for key in ("solid_count", "closed_solid_count", "open_shell_count", "raw_face_count")},
+            "is_open_shell": parsed["open_shell_count"] > 0, "merged_face_count": surface["merged_face_count"],
+        },
+        "d1_basic": extract_basic(label, filename, registered_material, obb, holes), "d2_volume": volume,
+        "d3_pmi": pmi, "d4_surface": surface, "d6_obb": obb, "d7_holes": holes,
+        "cache_refs": {"glb_coord_matrix": CAD_TO_SCENE},
+    }
+
+
+_FEATURE_EXTRACTORS = {INITIAL_FEATURE_VERSION: _features_v1}
 
 
 def _header(reader) -> tuple[list[str], list[str], list[str]]:
@@ -157,61 +212,21 @@ def _topology(shape) -> dict:
     }
 
 
-def _attributes(label):
-    attributes = TDF_AttributeIterator(label)
-    while attributes.More():
-        yield attributes.Value()
-        attributes.Next()
-
-
 def _xde_summary(label) -> dict:
-    material_labels = Sequence_TDF_Label()
-    XCAFDoc_DocumentTool.MaterialTool_s(label).GetMaterialLabels(material_labels)
-    readable_materials = assigned_materials = 0
-    ref_guid = XCAFDoc.MaterialRefGUID_s()
-    for material_label in material_labels:
-        attributes = list(_attributes(material_label))
-        for attribute in attributes:
-            if isinstance(attribute, XCAFDoc_Material):
-                name = attribute.GetName()
-                if name is not None and name.ToCString().strip():
-                    readable_materials += 1
-                    # 材料定义的树节点有子引用才表示有实际形状分配，零密度也可能是有效材料。
-                    assigned_materials += any(
-                        isinstance(ref, TDataStd_TreeNode) and ref.ID().IsSame(ref_guid) and ref.HasFirst()
-                        for ref in attributes
-                    )
-                break
-
-    gdt = XCAFDoc_DocumentTool.DimTolTool_s(label)
-    pmi = {}
-    for kind, read, attribute_type in (
-        ("dimensions", gdt.GetDimensionLabels, XCAFDoc_Dimension),
-        ("geometric_tolerances", gdt.GetGeomToleranceLabels, XCAFDoc_GeomTolerance),
-        ("datums", gdt.GetDatumLabels, XCAFDoc_Datum),
-    ):
-        labels = Sequence_TDF_Label()
-        read(labels)
-        # GD&T 三类语义对象单列，图形标注和截图不计入语义可读率。
-        pmi[kind] = sum(
-            any(isinstance(attr, attribute_type) and attr.GetObject() is not None for attr in _attributes(item))
-            for item in labels
-        )
-
+    materials = list(material_entries(label))
     colors, layers = Sequence_TDF_Label(), Sequence_TDF_Label()
     XCAFDoc_DocumentTool.ColorTool_s(label).GetColors(colors)
     XCAFDoc_DocumentTool.LayerTool_s(label).GetLayerLabels(layers)
     return {
-        "xde_material_definitions": material_labels.Length(),
-        "xde_readable_materials": readable_materials,
-        "xde_assigned_materials": assigned_materials,
+        "xde_material_definitions": len(materials),
+        "xde_readable_materials": sum(bool(name) for name, _ in materials),
+        "xde_assigned_materials": sum(bool(name) and assigned for name, assigned in materials),
         "xde_color_definitions": colors.Length(),
         "xde_layer_definitions": layers.Length(),
-        "semantic_pmi": pmi,
     }
 
 
-def _write_mesh(shape, target: Path, triangle_limit: int) -> int:
+def _mesh_arrays(shape, triangle_limit: int) -> tuple[np.ndarray, np.ndarray]:
     mesh = BRepMesh_IncrementalMesh(shape, _MESH_DEFLECTION_MM, False, _MESH_ANGLE_RAD, False)
     if not mesh.IsDone():
         raise StepError("ERR_STEP_MESH_FAILED")
@@ -243,5 +258,4 @@ def _write_mesh(shape, target: Path, triangle_limit: int) -> int:
     faces = faces[np.linalg.norm(np.cross(edges[:, 0], edges[:, 1]), axis=1) > 1e-12]
     if not len(faces):
         raise StepError("ERR_STEP_MESH_EMPTY")
-    np.savez(target, vertices=points, faces=faces)
-    return len(faces)
+    return points, faces

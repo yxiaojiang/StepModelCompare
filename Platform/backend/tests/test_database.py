@@ -5,24 +5,35 @@ from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Barrier
+from threading import Barrier, Event
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect, select
+from sqlalchemy import event, inspect, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
-from app.db.models import Base, CompareJob, Enterprise, Model, ModelFeature, SimilarityRule, User
+from app.db.model_features import (
+    FeatureVersionConflict, active_feature_version, load_ready_features, missing_feature_models,
+    switch_active_feature_version, vault_path,
+)
+from app.db.models import Base, CompareJob, Enterprise, FeatureCatalog, Model, ModelFeature, SimilarityRule, User
 from app.db.queue import claim_compare_job, claim_indexing_model
 from app.db.session import build_engine
+from app.geometry_engine.feature_indexing import build_model_features, rebuild_feature_version
+from app.geometry_engine.step_input import ParseLimits
+from app.geometry_engine.worker_runner import OcctPool
 
 _ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 _POSTGRES_TEST_URL = os.environ.get("STEP_PLATFORM_TEST_POSTGRES_URL")
+_DEMO = Path(__file__).resolve().parents[3] / "Demo/samples/rehearsal/queries/SHOW-POSE-INCH.step"
+_VERSION_FIXTURE = "1.1.0"
+_TEST_VERSIONS = frozenset({"1.0.0", _VERSION_FIXTURE})
 
 
 def _migration(engine, command_fn, *args):
@@ -48,12 +59,12 @@ def _seed_user(engine) -> tuple[int, int, int]:
     return user, enterprise, other
 
 
-def _seed_model(engine, user_id, enterprise_id):
+def _seed_model(engine, user_id, enterprise_id, path="test/case.step"):
     models = Model.__table__
     with engine.begin() as connection:
         return connection.execute(models.insert().values(
             enterprise_id=enterprise_id, md5="a" * 32, model_name="case", original_filename="case.step",
-            file_size_bytes=90, storage_path="test/case.step", uploader_id=user_id, status="INDEXING",
+            file_size_bytes=90, storage_path=path, uploader_id=user_id, status="INDEXING",
         ).returning(models.c.id)).scalar_one()
 
 
@@ -112,6 +123,31 @@ def _assert_constraints(case, engine):
         connection.execute(rule.values(scope="ENTERPRISE", enterprise_id=enterprise))
     with case.assertRaises(IntegrityError), engine.begin() as connection:
         connection.execute(rule.values(scope="ENTERPRISE"))
+
+
+class _VersionFixturePool:
+    """替代几何层，写出占位文件用于真实 PostgreSQL 事务测试。可在解析完成前人为挂起。"""
+
+    def __init__(self, *, started=None, resume=None, reject_insert=False):
+        self.started = started
+        self.resume = resume
+        self.reject_insert = reject_insert
+        self.calls = []
+
+    def extract_features(self, path, *, feature_version, mesh_target, glb_target, original_filename,
+                         registered_material):
+        """记录 path 的提取调用，向暂存路径写入夹具，返回目标版本数据；同步失败抛 TimeoutError。"""
+        self.calls.append((path, feature_version, original_filename, registered_material))
+        if self.started is not None:
+            self.started.set()
+            if not self.resume.wait(5):
+                raise TimeoutError("等待测试释放提取阻塞超时")
+        mesh_target.write_bytes(b"mesh fixture")
+        glb_target.write_bytes(b"GLB fixture")
+        result = {"feature_version": feature_version, "cache_refs": {}}
+        if self.reject_insert:
+            result["test_error"] = True
+        return result
 
 
 class SqliteMigrationTests(unittest.TestCase):
@@ -226,3 +262,190 @@ class PostgresTests(unittest.TestCase):
         with engine.connect() as conn:
             rows = conn.execute(select(Model.status, Model.indexing_started_at)).all()
         self.assertTrue(all(status == "INDEXING" and started_at for status, started_at in rows))
+
+
+    def test_feature_migration_carries_existing_version_back_and_forth(self):
+        """从已有全局规则的首版数据库升级并降级，保留已存的版本行与全局指针。"""
+        engine = self._engine
+        _migration(engine, command.downgrade, "0001")
+        user, enterprise, _ = _seed_user(engine)
+        model = _seed_model(engine, user, enterprise)
+        with engine.begin() as connection:
+            connection.execute(SimilarityRule.__table__.insert().values(
+                scope="GLOBAL", name="现有规则", version="1", is_active=True, active_feature_version="1.3.0",
+                weights_json={}, thresholds_json={}, missing_policy_json={}, max_refine_k=2, updated_by=user,
+            ))
+            connection.execute(ModelFeature.__table__.insert().values(
+                model_id=model, feature_version="1.3.0", status="READY", feature_payload={},
+            ))
+        _migration(engine, command.upgrade, "head")
+        with engine.begin() as connection:
+            self.assertEqual(active_feature_version(connection), "1.3.0")
+            connection.execute(update(FeatureCatalog).values(active_feature_version="1.4.0"))
+        _migration(engine, command.downgrade, "0001")
+        with engine.connect() as connection:
+            self.assertEqual(connection.execute(select(SimilarityRule.active_feature_version)).scalar_one(), "1.4.0")
+            self.assertEqual(connection.execute(select(ModelFeature.feature_version)).scalar_one(), "1.3.0")
+
+    def test_feature_admission_and_repair(self):
+        """真实 OCCT 加真实 PostgreSQL 验证入库幂等、失败隔离、缓存修复及同件跨企分离。"""
+        user, first_enterprise, second_enterprise = _seed_user(self._engine)
+        first = _seed_model(self._engine, user, first_enterprise)
+        other = _seed_model(self._engine, user, second_enterprise)
+        bad = _seed_model(self._engine, user, first_enterprise, "test/broken.step")
+        with TemporaryDirectory() as directory, OcctPool(ParseLimits(), workers=1) as pool:
+            vault = Path(directory)
+            (vault / "test").mkdir()
+            (vault / "test/case.step").write_bytes(_DEMO.read_bytes())
+            (vault / "test/broken.step").write_bytes(b"bad")
+            for model_id in (first, first, other):
+                result = build_model_features(self._engine, vault, pool, model_id, registered_material="SUS304")
+                self.assertEqual((result.feature_version, result.status), ("1.0.0", "READY"))
+            result = build_model_features(self._engine, vault, pool, bad)
+            self.assertEqual((result.status, result.error_code), ("FAILED", "ERR_INVALID_STEP_HEADER"))
+            with self._engine.connect() as connection:
+                version = active_feature_version(connection)
+                rows = load_ready_features(connection, [first, other, bad], version)
+                self.assertEqual([row.model_id for row in rows], [first, other])
+                self.assertEqual(rows[0].feature_payload["d1_basic"]["materials"], ["SUS304"])
+                self.assertEqual(rows[0].feature_payload["cache_refs"]["glb_path"], rows[0].glb_path)
+                self.assertTrue(rows[0].glb_path.startswith(f"cache/enterprise-{first_enterprise}/{first}/1.0.0/"))
+                self.assertTrue(rows[1].glb_path.startswith(f"cache/enterprise-{second_enterprise}/{other}/1.0.0/"))
+                states = dict(connection.execute(select(Model.id, Model.status)).tuples().all())
+                self.assertEqual(states, {first: "APPROVED", other: "APPROVED", bad: "PARSE_FAILED"})
+            self.assertEqual(len(list(vault.rglob("preview.glb"))), 2)
+            old_key = rows[0].glb_path
+            vault_path(vault, old_key).unlink()
+            with self._engine.connect() as connection:
+                self.assertEqual(missing_feature_models(connection, vault, "1.0.0"), [first])
+            with self.assertRaisesRegex(FeatureVersionConflict, "缓存"):
+                switch_active_feature_version(self._engine, vault, "1.0.0", "1.0.0")
+            self.assertEqual(build_model_features(self._engine, vault, pool, first).status, "READY")
+            with self._engine.connect() as connection:
+                self.assertEqual(missing_feature_models(connection, vault, "1.0.0"), [])
+                fixed, = load_ready_features(connection, [first], "1.0.0")
+                self.assertNotEqual(fixed.glb_path, old_key)
+                self.assertEqual(fixed.feature_payload["d1_basic"]["materials"], ["SUS304"])
+
+    def test_feature_transaction_failure_removes_unreferenced_attempt(self):
+        """在目录发布后注入数据库约束拒绝，验证数据库回滚、产物清理和重试。"""
+        user, enterprise, _ = _seed_user(self._engine)
+        model = _seed_model(self._engine, user, enterprise)
+        with self._engine.begin() as connection:
+            connection.exec_driver_sql(
+                "ALTER TABLE model_features ADD CONSTRAINT test_feature_payload "
+                "CHECK ((feature_payload ->> 'test_error') IS NULL)"
+            )
+        with TemporaryDirectory() as directory:
+            vault = Path(directory)
+            with self.assertRaises(IntegrityError):
+                build_model_features(self._engine, vault, _VersionFixturePool(reject_insert=True), model)
+            self.assertEqual(list(vault.rglob("*.glb")), [])
+            self.assertEqual(list(vault.rglob(".staging-*")), [])
+            with self._engine.connect() as connection:
+                self.assertEqual(connection.execute(select(Model.status)).scalar_one(), "INDEXING")
+                self.assertEqual(connection.execute(select(ModelFeature.id)).all(), [])
+            self.assertEqual(build_model_features(self._engine, vault, _VersionFixturePool(), model).status, "READY")
+
+    def test_version_switch_before_inflight_admission(self):
+        """旧版提取在切换后返回时重新入队，且旧快照及现行版本均可精确查询。"""
+        user, enterprise, _ = _seed_user(self._engine)
+        published, inflight = [_seed_model(self._engine, user, enterprise) for _ in range(2)]
+        started, resume = Event(), Event()
+        with (
+            TemporaryDirectory() as directory, ThreadPoolExecutor(max_workers=1) as workers,
+            patch("app.geometry_engine.feature_versions.SUPPORTED_FEATURE_VERSIONS", _TEST_VERSIONS),
+        ):
+            vault = Path(directory)
+            pool = _VersionFixturePool()
+            self.assertEqual(build_model_features(self._engine, vault, pool, published).status, "READY")
+            self.assertEqual(claim_indexing_model(self._engine), inflight)
+            paused = _VersionFixturePool(started=started, resume=resume)
+            remaining = workers.submit(build_model_features, self._engine, vault, paused, inflight)
+            try:
+                self.assertTrue(started.wait(5))
+                rebuild_feature_version(self._engine, vault, pool, expected="1.0.0", target=_VERSION_FIXTURE)
+            finally:
+                resume.set()
+            self.assertEqual(remaining.result(timeout=5).status, "RETRY")
+            self.assertEqual(claim_indexing_model(self._engine), inflight)
+            self.assertEqual(build_model_features(self._engine, vault, pool, inflight).feature_version, _VERSION_FIXTURE)
+            with self._engine.connect() as connection:
+                self.assertEqual(active_feature_version(connection), _VERSION_FIXTURE)
+                old, = load_ready_features(connection, [published, inflight], "1.0.0")
+                current = load_ready_features(connection, [published, inflight], _VERSION_FIXTURE)
+                self.assertEqual([row.model_id for row in current], [published, inflight])
+                self.assertNotEqual(old.glb_path, current[0].glb_path)
+                self.assertTrue(vault_path(vault, old.glb_path).is_file())
+
+    def test_admission_commits_before_waiting_switch(self):
+        """另一连接先完成旧版入库，等待的切换方必须在锁释放后发现该模型的缺口。"""
+        user, enterprise, _ = _seed_user(self._engine)
+        model = _seed_model(self._engine, user, enterprise)
+        admitted, resume, switch_waiting = Event(), Event(), Event()
+
+        def observe(conn, cursor, statement, parameters, context, executemany):
+            if statement.startswith("UPDATE models SET status"):
+                admitted.set()
+                if not resume.wait(5):
+                    raise TimeoutError("测试未释放入库事务")
+
+        def observe_switch(conn, cursor, statement, parameters, context, executemany):
+            if "FROM feature_catalog" in statement and "FOR UPDATE" in statement:
+                switch_waiting.set()
+
+        event.listen(self._engine, "after_cursor_execute", observe)
+        event.listen(self._engine, "before_cursor_execute", observe_switch)
+        self.addCleanup(event.remove, self._engine, "after_cursor_execute", observe)
+        self.addCleanup(event.remove, self._engine, "before_cursor_execute", observe_switch)
+        with (
+            TemporaryDirectory() as directory, ThreadPoolExecutor(max_workers=2) as workers,
+            patch("app.geometry_engine.feature_versions.SUPPORTED_FEATURE_VERSIONS", _TEST_VERSIONS),
+        ):
+            vault = Path(directory)
+            pool = _VersionFixturePool()
+            building = workers.submit(build_model_features, self._engine, vault, pool, model)
+            try:
+                self.assertTrue(admitted.wait(5))
+                switching = workers.submit(switch_active_feature_version, self._engine, vault, "1.0.0", _VERSION_FIXTURE)
+                self.assertTrue(switch_waiting.wait(5))
+                self.assertFalse(switching.done())
+            finally:
+                resume.set()
+            self.assertEqual(building.result(timeout=5).status, "READY")
+            with self.assertRaisesRegex(FeatureVersionConflict, "未就绪"):
+                switching.result(timeout=5)
+            with self._engine.connect() as connection:
+                self.assertEqual(active_feature_version(connection), "1.0.0")
+                self.assertEqual(missing_feature_models(connection, vault, _VERSION_FIXTURE), [model])
+
+    def test_rebuild_catches_models_approved_after_scan_starts(self):
+        """完成第一次扫描期间新增的入库，第二次查漏必须在切换前补齐其目标版本。"""
+        user, enterprise, _ = _seed_user(self._engine)
+        existing = _seed_model(self._engine, user, enterprise)
+        started, resume = Event(), Event()
+        with (
+            TemporaryDirectory() as directory, ThreadPoolExecutor(max_workers=1) as workers,
+            patch("app.geometry_engine.feature_versions.SUPPORTED_FEATURE_VERSIONS", _TEST_VERSIONS),
+        ):
+            vault = Path(directory)
+            pool = _VersionFixturePool()
+            self.assertEqual(build_model_features(self._engine, vault, pool, existing).status, "READY")
+            paused = _VersionFixturePool(started=started, resume=resume)
+            rebuild = workers.submit(
+                rebuild_feature_version, self._engine, vault, paused,
+                expected="1.0.0", target=_VERSION_FIXTURE, batch_size=1,
+            )
+            try:
+                self.assertTrue(started.wait(5))
+                added = _seed_model(self._engine, user, enterprise)
+                self.assertEqual(build_model_features(self._engine, vault, pool, added).feature_version, "1.0.0")
+            finally:
+                resume.set()
+            rebuild.result(timeout=5)
+            with self._engine.connect() as connection:
+                self.assertEqual(active_feature_version(connection), _VERSION_FIXTURE)
+                self.assertEqual([row.model_id for row in load_ready_features(
+                    connection, [existing, added], _VERSION_FIXTURE,
+                )], [existing, added])
+            self.assertEqual(len(paused.calls), 2)

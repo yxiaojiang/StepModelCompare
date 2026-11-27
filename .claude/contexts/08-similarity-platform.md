@@ -19,7 +19,8 @@
 - `Demo/.venv` 实装 `cadquery-ocp-novtk 8.0.1.1.0` + `numpy` + `scipy` + `libigl`，包含 `STEPCAFControl_Reader`、全部 `XCAFDoc_*Tool`、`BRepAdaptor_Surface` 及 `igl.AABB`。
 - `Demo/src/alignment.py` 不调用 OCCT，纯基于 `numpy`/`scipy`/`igl` 运算；`Demo/src/` 已验证毫米统一、24 初值右手系 ICP 与 GLB 矩阵 $C_{\text{新}} T C_{\text{旧}}^{-1}$。
 - `STEP-PLAT-001` 已通过独立审核，首版迁移和队列行锁已在本机 PostgreSQL 复测。证据见 [审核归档](../../CRDocs/archive/2026-11-27_STEP-PLAT-001_后端骨架与OCCT解析池/INDEX.md)。
-- `STEP-PLAT-002` 已独立审核通过。查询树复用、双层共用截止值与进程回收已复测，两项 P2 均关闭。证据与环境边界见 [审核归档](../../CRDocs/archive/2026-11-27_STEP-PLAT-002_任务级对比Worker与P2收口/INDEX.md)。阶段 2.2 待开发。
+- `STEP-PLAT-002` 已独立审核通过。查询树复用、双层共用截止值与进程回收已复测，两项 P2 均关闭。证据与环境边界见 [审核归档](../../CRDocs/archive/2026-11-27_STEP-PLAT-002_任务级对比Worker与P2收口/INDEX.md)。
+- `STEP-PLAT-003` 对应阶段 2.2，已独立审核通过。OCCT 子进程提取毫米制 D1–D4、D6–D7，导出 D5 采样网格与 GLB。全局指针由 `feature_catalog` 单例持有，入库与切换通过 PostgreSQL 行锁互斥，版本重提取先全量后增量。真实提取版本为 `1.0.0`，第二版本只在事务用例中模拟。详见 [独立审核归档](../../CRDocs/archive/2026-11-27_STEP-PLAT-003_特征提取与版本化存储/INDEX.md)。
 
 ## 待验证事项（阶段 1 冻结）
 - 客户 20–50 件真实 `.stp` 的协议/PMI/材料/闭合性分布，以及单件 OCCT 与单次 `igl` ICP 实测耗时；

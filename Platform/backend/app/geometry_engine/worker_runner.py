@@ -13,6 +13,7 @@ from threading import Condition
 from time import monotonic
 from typing import TYPE_CHECKING, Callable
 
+from app.geometry_engine.feature_versions import require_feature_version
 from app.geometry_engine.process_limits import apply_memory_limit
 from app.geometry_engine.step_input import ParseLimits, StepError, validate_step_file
 
@@ -27,6 +28,7 @@ _INIT_FAILED = b"E"
 
 def _worker_main(connection: Connection, limits: ParseLimits, slot: Path, processor: _Processor | None):
     with connection:
+        default_processor = processor is None
         try:
             apply_memory_limit(limits.occt_memory_limit_mb)
             os.environ.pop("STEP_PLATFORM_DATABASE_URL", None)
@@ -49,9 +51,17 @@ def _worker_main(connection: Connection, limits: ParseLimits, slot: Path, proces
                     return
             except (EOFError, OSError):
                 return
-            path, wants_mesh = json.loads((slot / "request.json").read_text(encoding="utf-8"))
+            path, wants_mesh, wants_glb, features = json.loads((slot / "request.json").read_text(encoding="utf-8"))
             try:
-                result = {"value": processor(Path(path), limits, (slot / "mesh.npz") if wants_mesh else None)}
+                mesh = slot / "mesh.npz" if wants_mesh else None
+                if features is None:
+                    value = processor(Path(path), limits, mesh)
+                elif default_processor:
+                    value = processor(Path(path), limits, mesh, glb_path=slot / "preview.glb" if wants_glb else None,
+                                      **features)
+                else:
+                    raise StepError("ERR_FEATURE_PROCESSOR_UNAVAILABLE")
+                result = {"value": value}
             except StepError as error:
                 result = {"error_code": error.code}
             except MemoryError:
@@ -122,13 +132,18 @@ class _WorkerSlot:
             raise StepError("ERR_PARSE_WORKER_INIT")
         if signal != _RESULT:
             raise StepError("ERR_PARSE_WORKER_EXIT")
-        return json.loads((self.folder / "result.json").read_text(encoding="utf-8"))
+        result = json.loads((self.folder / "result.json").read_text(encoding="utf-8"))
+        if monotonic() >= deadline:
+            raise StepError("ERR_PARSE_TIMEOUT")
+        return result
 
-    def _run(self, path, mesh_target, deadline, limits, recycle_after, processor, *, require_mesh) -> dict:
+    def _run(self, path, mesh_target, deadline, limits, recycle_after, processor, *,
+             require_mesh, glb_target=None, features=None) -> dict:
         mesh = self.folder / "mesh.npz"
+        glb = self.folder / "preview.glb"
         try:
             (self.folder / "request.json").write_text(
-                json.dumps((str(path), mesh_target is not None)), encoding="utf-8",
+                json.dumps((str(path), mesh_target is not None, glb_target is not None, features)), encoding="utf-8",
             )
             if self.process is not None and not self.process.is_alive():
                 self._stop()
@@ -154,12 +169,21 @@ class _WorkerSlot:
                 raise StepError(value["mesh_error"])
             if not mesh.is_file():
                 raise StepError("ERR_STEP_MESH_MISSING")
-        if mesh_target is not None and mesh.is_file():
-            # 先复制到目标同一目录，再原子替换，避免跨磁盘移动与半成品可见。
-            with TemporaryDirectory(prefix=".occt-", dir=mesh_target.parent) as staging:
-                complete = Path(staging) / "mesh.npz"
-                shutil.copyfile(mesh, complete)
-                complete.replace(mesh_target)
+        if features is not None:
+            payload = value.get("feature_payload")
+            if not payload or payload.get("feature_version") != features["feature_version"]:
+                raise StepError("ERR_FEATURE_PAYLOAD_MISSING")
+        if glb_target is not None and not glb.is_file():
+            raise StepError("ERR_STEP_GLB_MISSING")
+        for source, target in ((mesh, mesh_target), (glb, glb_target)):
+            if target is not None and source.is_file():
+                # 先复制到目标同一目录，再原子替换，避免跨磁盘移动与半成品可见。
+                with TemporaryDirectory(prefix=".occt-", dir=target.parent) as staging:
+                    complete = Path(staging) / source.name
+                    shutil.copyfile(source, complete)
+                    if monotonic() >= deadline:
+                        raise StepError("ERR_PARSE_TIMEOUT")
+                    complete.replace(target)
         return value
 
 
@@ -232,6 +256,28 @@ class OcctPool:
         源文件、解析或必需网格失败抛 StepError，目标参数冲突抛 ValueError。
         池关闭抛 RuntimeError，输出写入失败抛 OSError。
         """
+        return self._execute(path, mesh_target, require_mesh, deadline)
+
+    def extract_features(
+        self, path: Path, *, feature_version: str, mesh_target: Path, glb_target: Path | None = None,
+        original_filename: str | None = None, registered_material: str | None = None,
+        deadline: float | None = None,
+    ) -> dict:
+        """从 path 提取指定 feature_version，返回特征字典并写出必需网格和可选 GLB。
+
+        original_filename 和 registered_material 对应原件名与台账材料；deadline 为单调时钟截止值。
+        产物路径须为调用方拥有的暂存路径。版本或路径无效抛 ValueError，解析失败抛 StepError，
+        暂存写入失败抛 OSError，池关闭抛 RuntimeError。
+        """
+        require_feature_version(feature_version)
+        result = self._execute(
+            path, mesh_target, True, deadline, glb_target=glb_target,
+            features={"feature_version": feature_version, "original_filename": original_filename,
+                      "registered_material": registered_material},
+        )
+        return result["feature_payload"]
+
+    def _execute(self, path, mesh_target, require_mesh, deadline, *, glb_target=None, features=None) -> dict:
         if require_mesh and mesh_target is None:
             raise ValueError("要求生成网格时必须指定目标路径")
         pool_deadline = monotonic() + self._timeout
@@ -239,17 +285,19 @@ class OcctPool:
             pool_deadline = min(pool_deadline, deadline)
         validate_step_file(path, self._limits.max_file_size_bytes)
         path = path.absolute()
-        if mesh_target is not None and mesh_target.resolve() == path.resolve():
-            raise ValueError("网格目标不能覆盖 STEP 原件")
+        targets = [target.resolve() for target in (mesh_target, glb_target) if target is not None]
+        if path.resolve() in targets or len(set(targets)) != len(targets):
+            raise ValueError("产物目标不能相同或覆盖 STEP 原件")
         with self._lease(pool_deadline) as slot:
             try:
                 return slot._run(
                     path, mesh_target, pool_deadline, self._limits, self._recycle_after, self._processor,
-                    require_mesh=require_mesh,
+                    require_mesh=require_mesh, glb_target=glb_target, features=features,
                 )
             finally:
                 # 强杀可能留下不完整网格，归还槽位之前清除，禁止下一件误用。
                 (slot.folder / "mesh.npz").unlink(missing_ok=True)
+                (slot.folder / "preview.glb").unlink(missing_ok=True)
 
     def close(self) -> None:
         """关闭池并释放进程与暂存目录，无参数或返回值，可重复调用。"""

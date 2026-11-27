@@ -135,6 +135,16 @@ class ModelFeature(Base):
     extracted_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
 
 
+class FeatureCatalog(Base):
+    """持久化全局特征版本指针。单例记录由迁移初始化，供入库和切换事务共用。"""
+
+    __tablename__ = "feature_catalog"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_feature_catalog_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    active_feature_version: Mapped[str] = mapped_column(String(32))
+
+
 class SimilarityRule(Base):
     """保存全局或企业规则版本，生效标记受数据库作用域唯一约束。"""
 
@@ -164,6 +174,7 @@ class SimilarityRule(Base):
     name: Mapped[str] = mapped_column(String(150))
     version: Mapped[str] = mapped_column(String(40))
     is_active: Mapped[bool] = mapped_column(server_default=false())
+    # 保留历史规则字段用于迁移兼容。新任务从 feature_catalog 固定版本快照。
     active_feature_version: Mapped[str] = mapped_column(String(32), server_default=text("'1.0.0'"))
     weights_json: Mapped[dict] = mapped_column(JSON_DOCUMENT)
     thresholds_json: Mapped[dict] = mapped_column(JSON_DOCUMENT)
