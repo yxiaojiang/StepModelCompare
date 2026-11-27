@@ -13,15 +13,17 @@
 
 ## 当前模块导航
 
+> 01–06 号是按 `STEP-SIM-002`（旧件直接替代试点）划分的历史建议模块，均未启动；当前正式主线 `STEP-SIM-004` 的模块记忆统一在 08 号。客户未来要求叠加自动替代放行建议时，再按需启用 01–06。
+
 | 模块记忆文件 | 适用任务 | 状态 |
 | --- | --- | --- |
-| 01-step-ingestion-and-library.md | STEP 导入、单位/实体完整性、历史库与修订元数据 | 尚未启动；范围以实施方案为准 |
-| 02-candidate-retrieval.md | 多路粗排、候选并集、几何分组、候选名额和漏检分析 | 尚未启动；检索策略见实施方案第 4 节 |
-| 03-geometry-comparison.md | 基准对齐、双向表面差异、局部特征、接口与净空检查 | 尚未启动；比对策略见实施方案第 3–5 节 |
-| 04-engineering-evidence-and-revision.md | 替代需求单、工况证据、料号/修订、成熟资料及采用报告 | 尚未启动；业务判断见实施方案第 1–2、5 节 |
-| 05-blind-test-and-acceptance.md | 正反例标注、盲测、风险上界、建议率和人工复核负担 | 待阶段 1 前提签认；口径见 DECISIONS 中 STEP-SIM-002 |
-| 06-pilot-and-platform.md | 离线原型、基础试点、平台增量投入和扩展条件 | 尚未启动；平台是通过试点门槛后的可选项 |
-| [07-customer-demo.md](07-customer-demo.md) | 客户 Demo 的范围、对齐、评分、中文安装版与彩排 | 工作分支 test1。用户已确认 `Data/test` 安装成功。比对进度 500 已修，17:24 修复包已生成；用户尚未确认新包比对通过，Studio 实机视觉未复核 |
-| [08-similarity-platform.md](08-similarity-platform.md) | 正式多企业 STEP 相似度对比与检索平台（STEP-SIM-004，规划目录 `Platform/`） | 已采纳定稿；详细开发设计文档与四阶段计划已就绪，待切分支并启动阶段 1 样本盘点与契约冻结 |
+| 01-step-ingestion-and-library.md | （STEP-SIM-002）STEP 导入、单位/实体完整性、历史库与修订元数据 | 未启动；平台入库部分并入 08 |
+| 02-candidate-retrieval.md | （STEP-SIM-002）多路粗排、候选并集、几何分组、候选名额和漏检分析 | 未启动；平台检索与剪枝并入 08 |
+| 03-geometry-comparison.md | （STEP-SIM-002）基准对齐、双向表面差异、局部特征、接口与净空检查 | 未启动；平台 D5 对齐并入 08 |
+| 04-engineering-evidence-and-revision.md | （STEP-SIM-002）替代需求单、工况证据、料号/修订、成熟资料及采用报告 | 未启动；不属于 STEP-SIM-004 范围 |
+| 05-blind-test-and-acceptance.md | （STEP-SIM-002）正反例标注、盲测、风险上界、建议率和人工复核负担 | 未启动；不作为 STEP-SIM-004 前置阻塞 |
+| 06-pilot-and-platform.md | （STEP-SIM-002）离线原型、基础试点、平台增量投入和扩展条件 | 已由 STEP-SIM-004 正式平台取代 |
+| [07-customer-demo.md](07-customer-demo.md) | 客户 Demo 的范围、对齐、评分、中文安装版与彩排 | 冻结于标签 `demo-v0.3.1`。用户已确认 `Data/test` 安装成功。比对进度 500 已修，17:24 修复包已生成；用户尚未确认新包比对通过，Studio 实机视觉未复核 |
+| [08-similarity-platform.md](08-similarity-platform.md) | 正式多企业 STEP 相似度对比与检索平台（STEP-SIM-004，规划目录 `Platform/`） | 已采纳定稿；分支 `feat/platform-v1` 已切出；修正话题 STEP-SIM-005 审核中，待阶段 1 样本盘点与契约冻结 |
 
 具体模块工作开始后再创建对应文件，避免空白占位文档。模块划分、文件名可随实际交付调整，并同步更新本索引。

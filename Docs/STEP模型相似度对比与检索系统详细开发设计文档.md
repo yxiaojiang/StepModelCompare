@@ -1,9 +1,10 @@
 # STEP 模型相似度对比与检索系统 · 详细开发设计文档
 
-**文档版本**：v1.0（工程开发基线）  
+**文档版本**：v1.1（工程开发基线，已合入 `STEP-SIM-005` 采纳修正）  
 **编制日期**：2026-11-27  
-**依据决定**：`STEP-SIM-004`（ADOPTED，见 [PlanDocs/DECISIONS.md](../PlanDocs/DECISIONS.md)）  
-**配套材料**：[相似度评判逻辑与标准说明](STEP模型相似度评判逻辑与判断标准说明.md) · [系统开发报价单（¥266,340 / 92人天）](STEP模型相似度对比与检索系统开发报价单.xlsx) · [详细开发计划](../.claude/Plan.md)
+**依据决定**：`STEP-SIM-004` + `STEP-SIM-005`（均已 ADOPTED，见 [PlanDocs/DECISIONS.md](../PlanDocs/DECISIONS.md)）  
+**配套材料**：[相似度评判逻辑与标准说明](STEP模型相似度评判逻辑与判断标准说明.md) · [系统开发报价单（¥266,340 / 92人天）](STEP模型相似度对比与检索系统开发报价单.xlsx) · [详细开发计划](STEP模型相似度对比与检索系统详细开发计划.md)  
+**收口实现补充**：鉴权短时内存缓存须使用有界 LRU/TTL 容器（如 `maxsize=10000`）；`feature_version` 后台重提取切换 `active_feature_version` 前须执行一次窗口期内新入库模型的增量查漏补齐。
 
 > **工程定位与安全边界**：本系统用于多企业环境下的 STEP（`.stp`/`.step`）三维零件相似度量化计算、候选检索排序、图形化差异对比及客户端接口服务。相似度分数仅作检索、排序与差异辅助检查，**不单独等同于工程直接替代放行结论**；Web 工作台须固定展示该工程边界提示。
 
@@ -54,14 +55,15 @@ flowchart TB
         API["FastAPI 应用服务\n(鉴权 / 多企业隔离 / 配额预占 / 规则引擎 / 审核台)"]
     end
 
-    subgraph Workers["计算隔离层（独立进程池）"]
-        Queue["任务队列（Redis / DB Queue）\n1. 入库异步特征提取队列\n2. 对比计算任务队列"]
-        OCCTPool["受控 OCCT Worker 子进程池\n(单件硬超时 / 内存熔断 / 面片上限 / 崩溃自启)"]
+    subgraph Workers["计算隔离层（PostgreSQL 队列 + 两层 Worker 池）"]
+        Queue["PostgreSQL 任务队列（FOR UPDATE SKIP LOCKED）\n1. 入库特征提取队列（有界）\n2. 对比计算任务队列（满额 503）"]
+        OCCTPool["第一层：常驻受控 OCCT 解析子进程池\n(STEP/XDE/离散/GLB | 单件硬超时 / 内存与面片熔断 / N任务轮换)"]
+        CompareWorker["第二层：对比任务 Worker 进程池\n(numpy+scipy+libigl | 进程内复用查询件 igl.AABB 树顺序执行 K 次 ICP | compare_job_timeout)"]
     end
 
     subgraph Storage["持久化与文件存储层"]
-        DB["关系型数据库\n(生产 PostgreSQL / 开发测试 SQLite)"]
-        FS["本地或对象存储\n1. staging/ 隔离暂存区\n2. vault/ 已入库原件与只读几何缓存\n3. queries/ 对比查询归档"]
+        DB["关系型数据库\n(生产/并发测试 PostgreSQL 15+ / 单测 SQLite)"]
+        FS["本地或对象存储\n1. staging/ 隔离暂存区\n2. vault/ 已入库原件与按企业隔离几何缓存\n3. queries/ 对比查询归档"]
     end
 
     WebUI --> Nginx
@@ -71,20 +73,25 @@ flowchart TB
     API --> FS
     API --> Queue
     Queue --> OCCTPool
+    Queue --> CompareWorker
+    CompareWorker --> OCCTPool
     OCCTPool --> DB
     OCCTPool --> FS
+    CompareWorker --> DB
+    CompareWorker --> FS
 ```
 
 ### 2.2 推荐技术栈
 
 | 分层 | 推荐选型 | 选型依据 |
 | --- | --- | --- |
-| 后端框架 | Python 3.11+ / FastAPI / Uvicorn + Pydantic v2 | 与 `Demo/` 现有 `pythonocc-core (OCP)` 无缝衔接，自动生成 OpenAPI 接口文档，适合同步/异步任务编排 |
-| 几何内核 | `pythonocc-core (OCP)` + `numpy` + `scipy` / `trimesh` | 仓库 `Demo/.venv` 已验证包含 `STEPCAFControl_Reader`、全部 `XCAFDoc_*Tool` 与 `BRepAdaptor_Surface` |
-| 数据库与 ORM | PostgreSQL 15+（开发/单测兼容 SQLite）+ SQLAlchemy 2.0 + Alembic | 支持行级锁（`SELECT ... FOR UPDATE` / 原子 `UPDATE`）保障 5 次配额并发安全，原生 `JSONB` 存储结构化 `模型特征值` 与规则快照 |
-| 异步任务与进程隔离 | Celery / RQ（Redis）或 `multiprocessing.Pool` 受控子进程管理器 | 保证 OCCT C++ 异常、畸形文件死循环或 OOM 不拖垮 FastAPI 主进程 |
-| 密码与鉴权 | `argon2-cffi`（或 `bcrypt`）+ JWT（短期 Access Token）+ HTTPS Header/Body 基础鉴权兼容 | 满足客户“用户名和密码调用”及现代安全审计要求 |
-| 前端与三维视图 | Vite + Vue 3 / React + TypeScript + Three.js（本地随包打包，无外网依赖） | 兼容企业内网断网环境，复用 `GLTFLoader` 双视口联动与双色叠加 |
+| 后端框架 | Python 3.11+ / FastAPI / Uvicorn + Pydantic v2 | 与 `Demo/` 现有 OCCT Python 绑定（`cadquery-ocp-novtk`，导入名 `OCP`）无缝衔接，自动生成 OpenAPI 接口文档，适合同步/异步任务编排 |
+| 几何与对齐内核 | `cadquery-ocp-novtk`（`Demo/.venv` 实装 8.0.1.1.0，导入名 `OCP`；注意不是 `pythonocc-core`）+ `numpy` + `scipy`（`Rotation`）+ `libigl`（导入名 `igl`，注意不是 `trimesh`） | 仓库 `Demo/src/geometry.py` 与 `alignment.py` 已验证：`OCP` 负责 STEP/XDE/曲面与网格离散，`numpy+scipy+libigl` 负责 24 初值 ICP 与 `igl.AABB` 双向距离采样 |
+| 数据库与 ORM | PostgreSQL 15+（仅非并发基础单测兼容 SQLite）+ SQLAlchemy 2.0 + Alembic | 支持行级锁（`SELECT ... FOR UPDATE` / `SKIP LOCKED`）与 `JSONB`。SQLite 不支持 `FOR UPDATE`、`SKIP LOCKED`、`GREATEST` 等语法，**任务队列、配额并发与行锁测试必须在 PostgreSQL 上执行** |
+| 任务队列与两层进程隔离 | PostgreSQL 任务表（`FOR UPDATE SKIP LOCKED`）+ 常驻受控 OCCT 解析子进程池 + 对比任务 Worker 进程池（首期不引入 Redis / Celery） | 单人开发零额外中间件运维；OCCT 解析子进程隔离 C++ 崩溃与内存泄漏，对比 Worker 进程内复用 `igl.AABB` 树完成至多 $K$ 次 ICP，受 `compare_job_timeout` 硬超时管控 |
+| 密码与鉴权 | `argon2-cffi` + JWT（短期 Access Token）+ 带 `HMAC-SHA256(pepper, uid:auth_version:pwd)` 短时成功缓存与 IP/账号双限流的基础鉴权兼容 | 满足客户“用户名和密码调用”，防止高频 Basic Auth 触发 Argon2id CPU DoS，且状态变更递增 `auth_version` 即时失效 |
+| 前端与三维视图 | Vite + Vue 3 / React + TypeScript + Three.js（本地随包打包，无外网依赖；Vue 3 与 React **尚未选定**，阶段 1 二选一冻结） | 兼容企业内网断网环境，复用 `GLTFLoader` 双视口联动与双色叠加 |
+| 部署目标 | Linux Docker 或 Windows Server 服务化（**尚未选定**，按客户服务器清单在阶段 1 二选一作为首期目标） | 两者的子进程内存限制实现不同（Linux `RLIMIT_AS`/cgroup，Windows Job Object），同时支持需两套实现 |
 
 ### 2.3 建议工程目录结构（与 `Demo/` 物理隔离）
 
@@ -123,17 +130,22 @@ StepModelCompare/
 
 ## 三、核心算法与多维特征引擎设计（模块一：37 人/天）
 
-### 3.1 独立 OCCT Worker 子进程与安全熔断机制
+### 3.1 两层进程隔离模型（常驻 OCCT 解析池 + 任务级 ICP Worker）与安全熔断
 
-所有涉及 OCCT 解析、XDE 读取、网格化或 ICP 对齐的操作，**禁止直接在 FastAPI 主进程运行**，必须由 `worker_runner.py` 派发到独立子进程执行：
+对照 `Demo/src/geometry.py` 与 `alignment.py` 真实代码边界，仅 STEP/XDE 解析与三角网格离散调用 OCCT C++ 内核（`cadquery-ocp-novtk`），而 24 初值刚体配准与 `igl.AABB` 双向距离计算完全运行在 `numpy + scipy + libigl` 数组之上。因此采用**两层进程隔离**：
 
-1. **硬超时控制**：默认单件解析/提取超时 `30s`（大件配置上限 `60s`，阶段 1 冻结），超时直接 `SIGKILL` / `TerminateProcess` 终止子进程，返回 `ERR_PARSE_TIMEOUT`；
-2. **内存与面片熔断**：子进程启动前限制虚拟/常驻内存上限（如默认 `2 GB`，Windows 通过 Job Object、Linux 通过 `RLIMIT_AS`/`cgroup`），读取拓扑后若原始 `TopAbs_FACE` 数超过配置上限（如 `50,000` 面）立即中止并返回 `ERR_MODEL_TOO_COMPLEX`；
-3. **文件头前置校验**：入暂存区或进子进程前，先校验扩展名（`.stp`/`.step` 大小写不敏感）、单文件体积上限及 ASCII 头包含 `ISO-10303-21;` 标识，拦截伪装文件。
+1. **第一层：常驻受控 OCCT 解析子进程池（`worker_runner.py`）**：
+   - **职责边界**：仅执行 STEP/XDE 读取、`D1/D2/D3/D4/D6/D7` 特征提取、三角网格离散（导出 `.npz` 采样点云/网格）与 `.glb` 生成；**严禁在 FastAPI 主进程直接调用 `OCP`**；
+   - **单件硬超时与内存/面片熔断**：默认单件解析超时 `30s`（上限 `60s`，阶段 1 冻结），超时直接强杀重建并返回 `ERR_PARSE_TIMEOUT`；子进程设置 OS 级内存上限（Linux `RLIMIT_AS`/cgroup，Windows Job Object，默认 `2 GB`），若原始 `TopAbs_FACE` 数超过配置上限（如 `50,000` 面）立即中止返回 `ERR_MODEL_TOO_COMPLEX`；每完成 $N$（如 `50`）个解析任务主动轮换重启子进程，释放 OCCT C++ 堆碎片；
+   - **文件头前置校验**：入暂存区或进子进程前，先校验扩展名（`.stp`/`.step` 大小写不敏感）、单文件体积上限及 ASCII 头包含 `ISO-10303-21;` 标识。
+2. **第二层：对比任务 Worker 进程内复用 `igl.AABB` 树批量精排（不逐次起子进程）**：
+   - 查询件经 OCCT 子进程解析出特征与 `.npz` 网格后，对比任务 Worker 在本进程内一次性构建查询件的 `igl.AABB` 树；
+   - 对有效权重上界剪枝筛出的至多 $K$ 个候选件，直接加载候选 `.npz` 缓存并在本 Worker 进程内顺序执行 24 初值 Trimmed ICP 与双向距离计算，消除每次 ICP 启动子进程的开销；
+   - 整场对比任务受**任务级总硬超时 `compare_job_timeout`**（默认 `120s`，涵盖查询件解析 + 至多 $K$ 次 ICP）保护，超时由父进程终止该任务 Worker 并走配额回滚。
 
-### 3.2 `D1–D7` 特征提取与 `模型特征值` JSON Schema
+### 3.2 `D1–D7` 特征提取、`model_features` 版本隔离与 JSON Schema
 
-模型审核通过进入 `INDEXING` 时，一次性提取并持久化 `feature_payload`（携带 `feature_version`，后续修改权重/阈值免重解析）：
+模型审核通过进入 `INDEXING` 时，一次性提取并写入按版本隔离的 `model_features(model_id, feature_version, feature_payload, ...)` 表（后续修改权重/阈值免重解析；当算法升级至新 `feature_version` 时，后台完成全库 `APPROVED` 模型重提取后再原子切换全局 `active_feature_version`，**切换前在线查询与库内候选统一使用旧版本特征，严禁新旧版本混算**）：
 
 ```json
 {
@@ -286,10 +298,11 @@ def rank_candidates(query_feat, approved_models, rule, top_n=5):
 | --- | --- | --- |
 | `enterprises` | `id`, `name`, `code`, `storage_quota_mb`, `status`, `created_at` | `UNIQUE(code)` |
 | `invite_codes` | `id`, `enterprise_id`, `code`, `max_uses`, `used_count`, `expires_at`, `is_active`, `created_by` | `UNIQUE(code)`，校验有效期与剩余次数 |
-| `users` | `id`, `username`, `password_hash`, `role` (`SYS_ADMIN`/`ENT_ADMIN`/`ENT_USER`/`TRIAL_USER`), `enterprise_id` (可空), `is_trial`, `used_count` (默认 0), `in_flight_count` (默认 0), `failed_login_count`, `locked_until`, `created_at` | `UNIQUE(username)`；试用用户 `is_trial=true, enterprise_id=NULL` |
-| `trial_reservations` | `id`, `user_id`, `job_id`, `status` (`RESERVED`/`COMMITTED`/`RELEASED`/`EXPIRED`), `created_at`, `expires_at` | 用于超时回收器精确释放异常中断的 `in_flight_count` |
-| `models` | `id`, `enterprise_id` (`NULL` 或专用 ID 表示公共演示库), `is_public_demo`, `md5`, `model_name`, `original_filename`, `file_size_bytes`, `storage_path`, `status` (`PENDING`/`INDEXING`/`APPROVED`/`PARSE_FAILED`/`REJECTED`), `uploader_id`, `uploaded_at`, `reviewer_id`, `reviewed_at`, `approved_at`, `reject_or_error_reason`, `feature_version`, `feature_payload` (JSONB), `glb_path`, `selected_count` (默认 0) | 索引 `(enterprise_id, status)`、`(enterprise_id, md5)`；记录客户要求全部 6 项台账字段 |
-| `similarity_rules` | `id`, `scope` (`GLOBAL`/`ENTERPRISE`), `enterprise_id` (可空), `name`, `version`, `is_active`, `weights_json` (`D1..D7`), `thresholds_json`, `missing_policy_json` (区分 `both_missing` 与 `one_side_missing`), `max_refine_k`, `updated_by`, `updated_at` | 同一生效域仅 1 条 `is_active=true` |
+| `users` | `id`, `username`, `password_hash`, `auth_version` (默认 1), `role` (`SYS_ADMIN`/`ENT_ADMIN`/`ENT_USER`/`TRIAL_USER`), `enterprise_id` (可空), `is_trial`, `used_count` (默认 0), `in_flight_count` (默认 0), `failed_login_count`, `locked_until`, `is_active`, `created_at` | `UNIQUE(username)`；改密/禁用/锁定/改权时原子执行 `auth_version += 1` 使鉴权短缓存立即失效 |
+| `trial_reservations` | `id`, `user_id`, `job_id`, `status` (`RESERVED`/`COMMITTED`/`RELEASED`/`EXPIRED`), `created_at`, `updated_at`, `expires_at` | 状态变更强制带 `WHERE status='RESERVED'` CAS 条件；`COMMITTED` 失败时拦截迟到比对结果 |
+| `models` | `id`, `enterprise_id` (`NULL` 或专用 ID 表示公共演示库), `is_public_demo`, `md5`, `model_name`, `original_filename`, `file_size_bytes`, `storage_path`, `status` (`PENDING`/`INDEXING`/`APPROVED`/`PARSE_FAILED`/`REJECTED`), `uploader_id`, `uploaded_at`, `reviewer_id`, `reviewed_at`, `approved_at`, `reject_or_error_reason`, `selected_count` (默认 0) | 索引 `(enterprise_id, status)`、`(enterprise_id, md5)`；记录客户要求全部 6 项台账字段 |
+| `model_features` | `id`, `model_id` (FK), `feature_version`, `feature_payload` (JSONB), `sample_points_path`, `glb_path`, `status` (`READY`/`FAILED`), `extracted_at` | `UNIQUE(model_id, feature_version)`；按版本隔离存储，配合系统 `active_feature_version` 原子切换，杜绝升级期新旧特征混算 |
+| `similarity_rules` | `id`, `scope` (`GLOBAL`/`ENTERPRISE`), `enterprise_id` (可空), `name`, `version`, `is_active`, `active_feature_version` (默认 `"1.0.0"`), `weights_json` (`D1..D7`), `thresholds_json`, `missing_policy_json` (区分 `both_missing` 与 `one_side_missing`), `max_refine_k`, `updated_by`, `updated_at` | 同一生效域仅 1 条 `is_active=true` |
 | `compare_jobs` | `id`, `user_id`, `enterprise_id`, `source` (`WEB`/`CLIENT_API`), `query_filename`, `query_md5`, `rule_version_snapshot` (JSONB), `status` (`QUEUED`/`RUNNING`/`DONE`/`FAILED`), `termination` (`exact_pruned`/`truncated_by_k`/`exact_no_d5`), `max_untested_upper`, `error_code`, `created_at`, `finished_at` | 独立归档查询，不混入 `models` 库 |
 | `compare_results` | `id`, `job_id`, `model_id`, `rank`, `similarity_score`, `needs_review`, `review_reason`, `breakdown_json` (各维度实测误差、子分、有效权重、缺失标记), `align_matrix_json`, `is_selected` | 关联 `compare_jobs` 与 `models` |
 | `audit_logs` | `id`, `actor_id`, `action`, `target_type`, `target_id`, `detail_json` (已脱敏), `ip_address`, `created_at` | 记录审核入库、驳回、规则修改、配额变更与异常登录 |
@@ -317,30 +330,49 @@ stateDiagram-v2
 - **企业内重复 MD5 处置**：上传时在同企业内按 `md5` 查询：
   - 若已存在 `APPROVED` 或 `PENDING` / `INDEXING` 记录：直接幂等跳过，返回既有记录 ID、名称与当前状态，不重复排队耗算力；
   - 若仅存在 `PARSE_FAILED` 或 `REJECTED` 记录：提示上次失败/驳回原因，允许重新提交生成新审单；
-  - 若他企业已存在相同 MD5：本企业**完全不可见**，正常独立建账（底层只读几何缓存可由服务端按内容哈希安全内联复用，不向前端暴露复用事实）。
+  - 若他企业已存在相同 MD5：本企业**完全不可见**，正常独立建账并独立提取特征与 GLB（首期**不跨企业共享底层几何缓存**，彻底消除通过响应耗时试探他企模型的存在性侧信道）。
 
-### 4.4 无邀请码 5 次限额原子预占与超时回收
+### 4.4 无邀请码 5 次限额原子预占、CAS 状态守卫与迟到结果拦截
 
-1. **入口短事务预占**（Web 手动对比与客户端 `/api/v1/client/compare` 共用同一函数）：
-   ```sql
-   UPDATE users
-   SET in_flight_count = in_flight_count + 1
-   WHERE id = :uid AND is_trial = TRUE AND (used_count + in_flight_count) < 5;
-   ```
-   受影响行数为 `0` 时立即返回 `403 TRIAL_QUOTA_EXCEEDED`（提示绑定企业邀请码），**不进入 OCCT 计算队列**；成功则同事务写入一条 `trial_reservations(status='RESERVED', expires_at = now + reaper_ttl)` 并立即提交释放锁。
-2. **成功转实扣**：比对任务完成返回结果时，短事务原子更新 `used_count = used_count + 1, in_flight_count = GREATEST(in_flight_count - 1, 0)` 并将预占单置 `COMMITTED`。
-3. **失败/异常回滚**：待测 `.stp` 损坏解析失败、超时或服务端异常时，在 `finally` 块中原子执行 `in_flight_count = GREATEST(in_flight_count - 1, 0)` 并将预占单置 `RELEASED`。
-4. **超时回收器（防进程崩溃泄漏预占）**：后台定时任务扫描 `status='RESERVED' AND expires_at < now` 的僵尸预占单并回滚释放。**硬性约束**：`reaper_ttl` 必须严格大于 `最大排队等待时间 + OCCT 单件解析硬超时 + 30s 缓冲`（例如排队上限 60s + OCCT 超时 60s → `reaper_ttl >= 150s`），避免合法慢请求在计算中被提前误回收。
+1. **有界队列前置检查与入口短事务预占**（Web 手动对比与客户端 `/api/v1/client/compare` 共用同一函数）：
+   - 先检查 `compare_jobs` 中 `QUEUED / RUNNING` 任务数，若已达 `max_queue_depth` 直接返回 `503 QUEUE_FULL`（不预占配额）；
+   - 否则在短事务内执行：
+     ```sql
+     UPDATE users
+     SET in_flight_count = in_flight_count + 1
+     WHERE id = :uid AND is_trial = TRUE AND (used_count + in_flight_count) < 5;
+     ```
+     受影响行数为 `0` 时立即返回 `403 TRIAL_QUOTA_EXCEEDED`（提示绑定企业邀请码），**不进入计算队列**；成功则同事务写入 `trial_reservations(id=:rid, status='RESERVED', expires_at = NOW() + reaper_ttl)` 并立即提交。
+2. **成功转实扣与迟到结果拦截（`RESERVED → COMMITTED`）**：
+   - 比对任务完成准备落库 `compare_results` 时，必须在**同一数据库事务中**先对预占单执行 CAS：
+     ```sql
+     UPDATE trial_reservations
+     SET status = 'COMMITTED', updated_at = NOW()
+     WHERE id = :rid AND status = 'RESERVED';
+     ```
+   - **仅当 `rowcount == 1` 时**：同事务执行 `UPDATE users SET used_count = used_count + 1, in_flight_count = GREATEST(in_flight_count - 1, 0) WHERE id = :uid`，并写入 `compare_results`、将 `compare_jobs` 置为 `DONE`；
+   - **若 `rowcount == 0`**（说明该预占单已被超时回收器置为 `EXPIRED`）：**严禁写入或向客户端暴露 `compare_results`**，同事务直接将 `compare_jobs` 置为 `status = 'FAILED', error_code = 'QUOTA_EXPIRED'`，彻底堵死“超时回收后迟到任务免费拿结果”漏洞。
+3. **失败/异常回滚（`RESERVED → RELEASED`）**：
+   - 待测 `.stp` 损坏解析失败、触发 `compare_job_timeout` 或服务端异常时，在事务中先执行 `UPDATE trial_reservations SET status = 'RELEASED', updated_at = NOW() WHERE id = :rid AND status = 'RESERVED'`；**仅当 `rowcount == 1` 时**才同事务扣减 `in_flight_count = GREATEST(in_flight_count - 1, 0)`，防止与回收器重复扣减。
+4. **超时回收器与 `reaper_ttl` 公式（`RESERVED → EXPIRED`）**：
+   - 后台定时扫描 `status = 'RESERVED' AND expires_at < NOW()`，在短事务内带 `WHERE id = :rid AND status = 'RESERVED'` 更新为 `EXPIRED`，仅在 `rowcount == 1` 时扣减 `in_flight_count`；
+   - **硬性公式约束**：设队列最大等待上限为 `queue_wait_timeout`，单次对比任务总硬超时（含查询件 OCCT 解析 + 至多 $K$ 次 `igl` ICP 精排）为 `compare_job_timeout`，则必须满足：
+     $$\text{reaper\_ttl} > \text{queue\_wait\_timeout} + \text{compare\_job\_timeout} + 30\text{s 缓冲}$$
+     （例如排队上限 `60s` + 任务总硬超时 `120s` + 缓冲 `30s` → `reaper_ttl >= 210s`）。
 
 ---
 
 ## 五、接口契约与安全规范（模块三：24 人/天）
 
-### 5.1 通用安全约束
+### 5.1 通用安全约束与 HMAC 鉴权短缓存
 
 - **传输加密与凭证禁入 URL**：全站强制 HTTPS；中间件拦截 URL Query 中包含 `password`/`pwd`/`token` 等敏感参数的请求并返回 `400 CREDENTIALS_IN_URL_FORBIDDEN`；
-- **日志脱敏与防爆破**：访问日志与异常堆栈自动掩码密码与 Token；同一账号/IP 连续鉴权失败达 5 次触发指数退避或临时锁定 15 分钟；
-- **上传与接口限流**：对批量上传与对比接口施加每分钟频率限制（Rate Limit）、单文件大小上限（默认 50 MB，阶段 1 冻结）、单批件数上限（默认 50 件）与企业暂存区磁盘配额上限。
+- **Basic Auth / 表单密码短时缓存与 `auth_version` 即时失效**（防 Argon2id 慢哈希 CPU DoS）：
+  - 推荐客户端先调 `/api/v1/auth/token` 换取短期 JWT；当直接携带用户名密码调用时，仅对**校验成功**的凭证写入内存短缓存（TTL `300s`），缓存键为：
+    $$K_{\text{auth}} = \text{HMAC-SHA256}\big(\text{server\_pepper},\ \texttt{f"\{user.id\}:\{user.auth\_version\}:\{plaintext\_password\}"}\big)$$
+  - 缓存未命中进入 Argon2id 校验前，强制经过 **IP 维度 + 账号维度**双限流桶（超限返回 `429`），且失败凭证**绝不入缓存**；
+  - 凡发生**改密、禁用账号、连续失败锁定（5 次锁 15 分钟）、变更企业或角色**，同事务原子执行 `auth_version += 1`，使旧缓存键立即失效；
+- **日志脱敏与上传限流**：访问日志与异常堆栈自动掩码密码与 Token；对批量上传与对比接口施加频率限制、单文件大小上限（默认 50 MB）、单批件数上限（默认 50 件）、有界对比队列上限与企业暂存区磁盘配额上限。
 
 ### 5.2 客户端核心 API 契约
 
@@ -373,11 +405,11 @@ stateDiagram-v2
   }
   ```
 
-#### 3) 客户端单件 STP 相似度对比检查服务接口
+#### 3) 客户端单件 STP 相似度对比检查服务接口（支持混合同步与异步轮询）
 - `POST /api/v1/client/compare`
-- Content-Type：`multipart/form-data`（字段 `file` 接收单个 `.stp`/`.step`，可选字段 `top_n` 默认 5，`mode=sync|async`）
+- Content-Type：`multipart/form-data`（字段 `file` 接收单个 `.stp`/`.step`，可选字段 `top_n` 默认 5，`mode=hybrid|sync|async` 默认 `hybrid`）
 - 鉴权方式：同上（HTTPS Header/Body 或 Token）。
-- 业务规则：校验企业隔离或试用 5 次原子预占 → 独立 OCCT 子进程解析（损坏文件回滚预占返回 `422 INVALID_STEP_FILE`）→ 按生效规则比对 → 返回结果。
+- 业务规则：有界队列检查（满额返回 `503 QUEUE_FULL`）→ 校验企业隔离或试用 5 次原子预占 → PostgreSQL `SKIP LOCKED` 派发 → 常驻 OCCT 子进程解析（损坏文件 CAS 回滚预占返回 `422 INVALID_STEP_FILE`）+ 任务 Worker 内复用 `igl.AABB` 树按生效规则精排 → 在 `sync_wait_timeout`（默认 `25s–30s`）内完成则 CAS 实扣并返回 `200 OK`，超出等待窗口则返回 `202 Accepted` 及 `job_id` 供客户端轮询 `GET /api/v1/client/compare/{job_id}`。
 - Response（`200 OK`）：
   ```json
   {
@@ -445,8 +477,8 @@ stateDiagram-v2
 | **2. 四类难例回归** | ① 跨 CAD 面片分裂同件不跌出前五；② 双方无 PMI/材料按策略正常打分；③ 同体异形件被 D5+D6 拉开分差；④ 镜像件与对称歧义件不误叠加、准确入「待复核」 |
 | **3. 检索找回分母** | 以全部提交的预登记正例查询数为总分母，将解析失败、`PARSE_FAILED`、`truncated_by_k` 截断漏出与仅入「待复核」全部保留在分母中计为未命名前五，并分 4 类归因统计 |
 | **4. 多企业隔离与管理员** | 企业 A/B/试用/管理员四角色矩阵测试：跨企列表/详情/GLB/对比/同 MD5 上传均 **0 泄漏**；试用号无权批量上传且仅见公共演示库 |
-| **5. 5 次并发预占与回滚** | 同一试用号发起 **10 路并发**（含有效件 + 损坏/超时件）：无第 6 路有效计算穿透，损坏件回滚后精确消耗 5 次，第 6 次起 100% 拦截；补绑邀请码后恢复 |
-| **6. 防刷、五态与安全** | URL 传密直接拒绝且日志 0 明文；畸形文件子进程熔断不拖垮主服务；`PENDING` 与 `PARSE_FAILED` 检索命中为 **0**；同企重复 MD5 幂等跳过；Web 工作台固定显示工程边界提示 |
+| **5. 5 次并发预占、回滚与迟到拦截** | 在 PostgreSQL 上同一试用号发起 **10 路并发**（含有效件 + 损坏件 + 模拟超时回收后迟到完成件）：无第 6 路有效计算穿透，损坏件准确回滚，**已被超时回收的任务迟到完成时 `COMMITTED` CAS 失败并拦截结果返回 `QUOTA_EXPIRED`（0 次免费白嫖）**；补绑邀请码后恢复 |
+| **6. 防刷、五态、鉴权缓存与安全** | URL 传密直接拒绝且日志 0 明文；改密/禁用/锁定后 `auth_version` 递增令 Basic Auth 缓存 **0 ms 立即失效**；畸形文件子进程熔断不拖垮主服务；`PENDING` 与 `PARSE_FAILED` 检索命中为 **0**；同企重复 MD5 幂等跳过；Web 工作台固定显示工程边界提示 |
 
 ### 7.2 阶段 1 客户签认冻结参数表
 
@@ -454,7 +486,9 @@ stateDiagram-v2
 | --- | --- | --- |
 | 单方缺失默认计分策略 | `ZERO`（0 分保守计分，显式标未核实） | 客户业务方 |
 | 待审模型审核角色粒度 | 平台「系统管理员」统一审核（预留「企业管理员」开关） | 客户业务方 |
-| 无邀请码注册防刷门槛 | IP 限流 + 图形验证码 + 后台可关闭自助注册开关 | 客户运维/安全方 |
+| 无邀请码注册防刷门槛 | IP 限流 + 本地生成图形验证码 + 后台可关闭自助注册开关 | 客户运维/安全方 |
 | 规则生效作用域 | 全局默认规则 + 支持按企业覆盖 | 客户业务方 |
-| 客户端对比返回数量与模式 | 默认同步返回 Top-5（大库/高并发支持异步任务号轮询） | 客户技术对接人 |
-| 单文件上限 / 精排上限 $K$ / OCCT 超时 / 预占回收阈值 | `50 MB` / `K=50` / `60s` / `>= 150s` | 双方技术联合冻结 |
+| 客户端对比返回数量与模式 | 默认混合同步返回 Top-5（等待 `25s–30s`，超时转 `202` 任务号轮询） | 客户技术对接人 |
+| 单文件上限 / 精排上限 $K$ / 单件 OCCT 超时 / 任务总超时 `compare_job_timeout` / 预占回收 `reaper_ttl` | `50 MB` / `K=50` / `60s` / `120s` / `>= 210s`（强制 `> 排队上限 + compare_job_timeout + 30s`） | 双方技术联合冻结 |
+| 预登记正例集 / Top-5 找回率门槛 / 同步响应目标 | 20–30 组正例对（不足时第 3 项只统计不设硬门槛）/ 阶段 2 出口跑基线签认（占位 `>= 80%`）/ 同步对比 `P95 <= 30s` | 双方联合签认 |
+| 前端框架与唯一首期部署目标 | Vue 3 或 React 二选一 / Linux Docker 或 Windows Server 服务化二选一 | 阶段 1 开工冻结 |

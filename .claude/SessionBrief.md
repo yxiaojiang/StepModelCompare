@@ -1,26 +1,28 @@
 # 当前项目状态
 
 ## 项目目标
-当前正式开发主线已进入 `STEP-SIM-004`（ADOPTED）：面向客户看 Demo 后的正式建设需求，交付支持多企业数据隔离、可配置 `D1–D7` 多维相似度规则、五态人工确认防刷入库、Web 三维图形化对比检查及客户端双 API 的 STEP 模型相似度对比与检索服务平台（商务报价 92 人/天 × ¥2,895 = ¥266,340，双人并行规划 10–12 周）。相似度分数仅用于检索排序与差异定位，不单独等同于工程直接替代放行。
+当前正式开发主线为 `STEP-SIM-004` + `STEP-SIM-005`（均已 ADOPTED，单人独立开发）：在新建的 `Platform/` 目录下，交付支持多企业数据隔离、可配置 `D1–D7` 多维相似度规则、五态人工确认防刷入库、Web 三维图形化对比检查及客户端混合同步双 API 的 STEP 模型相似度对比与检索服务平台。相似度分数仅用于检索排序与差异定位，不单独等同于工程直接替代放行。
 
 ## 当前已定口径
-- **STEP-SIM-004 已采纳并归档**：Neon 第 2 轮复审 `CONVERGED`，用户已确认采纳收口；决定已写入 `PlanDocs/DECISIONS.md`，提案与历轮审核归档至 `PlanDocs/STEP-SIM-004/`，`PlanDocs/STATUS.md` 已重置为 `IDLE`。
-- **正式开发基线就绪**：详细开发设计文档已落盘 [STEP模型相似度对比与检索系统详细开发设计文档.md](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md)，四阶段详细开发计划已写入 [Plan.md](Plan.md)；两份对客文档（相似度标准说明 MD、已清脏数据并写入 19 处公式缓存值的 ¥266,340 报价单 Excel）与开发文档口径完全一致。
-- **与前序决定衔接**：本次平台建设不再将 `STEP-SIM-002` 的“必填工程替代需求单、自动三档替代结论、60 正例历史盲测及回收期前置测算”作为前置阻塞；保留“相似度不单独替代工程确认”、`STEP-SIM-003` 已验证几何内核及失败/截断/待复核计入验收分母底线；`STEP-SIM-002` 原基线实施方案与 PPT 暂不覆写。
-- **历史 Demo 状态**：`STEP-SIM-003` Windows Studio 0.3.1 位于 `Demo/`（工作分支 `test1`，含 `Data/test` 与比对进度 500 修复包 `17:24`），正式平台将在独立 `Platform/` 目录开发，不破坏 `Demo/`。
+- **讨论已全部收口**：`STEP-SIM-004` 与 `STEP-SIM-005` 均已 `ADOPTED` 归档，`PlanDocs/STATUS.md` 为 `IDLE`。
+- **正式开发基线（v1.1）**：[详细开发设计文档](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md) + [详细开发计划](../Docs/STEP模型相似度对比与检索系统详细开发计划.md) + [当前待推进](Plan.md)。
+- **已锁定的核心架构与代码逻辑（STEP-SIM-005）**：
+  - 几何依赖：`cadquery-ocp-novtk`（8.0.1+，导入名 `OCP`）+ `numpy` + `scipy` + `libigl`（导入名 `igl`），移除 `pythonocc-core` 与 `trimesh`。
+  - 两层进程隔离 + 轻量队列：OCCT 解析/XDE/GLB 走常驻受控子进程池（硬超时强杀重建 + 每 $N$ 任务轮换防 C++ 泄漏）；至多 $K$ 次 ICP 在任务级 Worker 进程内复用查询件 `igl.AABB` 树顺序执行（受 `compare_job_timeout` 管控）；队列直接用 PostgreSQL `FOR UPDATE SKIP LOCKED`（不引入 Redis/Celery）。
+  - 并发配额与迟到拦截：`reaper_ttl > queue_wait_timeout + compare_job_timeout + 30s`；结果落库前同事务 CAS 更新 `trial_reservations` `RESERVED → COMMITTED`，失败则严禁落库/返回结果并置 `FAILED (QUOTA_EXPIRED)`。
+  - 鉴权缓存与即时失效：`users.auth_version` + 有界 LRU/TTL 内存缓存（仅缓成功项，键 `HMAC-SHA256(pepper, uid:auth_version:pwd)`）+ 改密/禁用/锁定/改权递增 `auth_version` + 未命中前 IP+账号双限流。
+  - 版本化特征：`model_features(model_id, feature_version, ...)` + `active_feature_version` 全局指针，升级全库就绪并增量补齐后再原子切换；首期不跨企业共享底层几何缓存。
+- **Git 现状**：当前在 `feat/platform-v1` 分支，`Demo/` 与标签 `demo-v0.3.1` 冻结保留。
 
 ## 未决前提（阶段 1 签认冻结）
-- 客户真实历史 `.stp` 样本盘点（AP203/214 vs AP242 分布、PMI 与材料填写率、单/多闭合实体与开壳/装配体占比、单文件体积上限）。
-- 单方缺失默认计分策略（默认 0 分保守计分）、待审队列审核角色粒度（系统管理员 vs 企业管理员）、无邀请码自助注册防刷门槛、公共演示库来源及规则按全局/按企业作用域。
-- 客户端调用形态、并发规模、Top-1/Top-N 返回与选中回传契约、部署服务器环境清单；工程实现时须保证预占超时回收阈值严于“排队上限 + OCCT 单件解析硬超时”。
-- 报价单 Excel 对外发送前由用户在桌面 Excel 打开预览确认跨页打印版式；Demo 17:24 修复包如仍需演示待实机确认。
+- 客户 20–50 件真实 `.stp` 样本盘点（协议、语义 PMI 可读率、材料填写率、闭合/开壳/多实体占比、单件 OCCT 与单次 `igl` ICP 耗时）。
+- 前端框架（Vue 3 / React）与唯一首期部署目标（Linux Docker / Windows Server）二选一；单方缺失默认策略、审核角色粒度、注册防刷门槛、公共演示库来源、规则作用域、预登记正例集（20–30 组）及找回率/P95 门槛。
+- 报价单发客前桌面 Excel 预览分页；Demo 17:24 修复包如仍需演示待实机确认。
 
 ## 最近交付索引
-- [详细开发计划](Plan.md) · [多企业平台模块记忆](contexts/08-similarity-platform.md) · [Demo 模块记忆](contexts/07-customer-demo.md)
-- [详细开发设计文档](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md)
-- [相似度评判逻辑与标准说明](../Docs/STEP模型相似度评判逻辑与判断标准说明.md) · [系统开发报价单（¥266,340）](../Docs/STEP模型相似度对比与检索系统开发报价单.xlsx)
-- [决定记录](../PlanDocs/DECISIONS.md) · [STEP-SIM-004 归档](../PlanDocs/STEP-SIM-004/STATUS.md) · [STEP-SIM-003 归档](../PlanDocs/STEP-SIM-003/STATUS.md)
+- [当前待推进](Plan.md) · [详细开发计划](../Docs/STEP模型相似度对比与检索系统详细开发计划.md) · [详细开发设计文档](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md)
+- [多企业平台模块记忆](contexts/08-similarity-platform.md) · [Demo 模块记忆](contexts/07-customer-demo.md)
+- [决定记录](../PlanDocs/DECISIONS.md) · [STEP-SIM-005 归档](../PlanDocs/STEP-SIM-005/STATUS.md) · [STEP-SIM-004 归档](../PlanDocs/STEP-SIM-004/STATUS.md)
 
 ## 下一步
-1. 按分支整理建议将当前 `test1` 合并至 `main`（打标签保留 `demo-v0.3.1`），从 `main` 切出正式平台开发分支（如 `feat/platform-v1`）。
-2. 在桌面 Excel 预览确认报价单版式后发给客户，启动 [Plan.md](Plan.md) 阶段 1（收集客户 20–50 件真实 `.stp` 样本并签认冻结参数）。
+在 `feat/platform-v1` 分支启动开发第一步：冻结前端与部署选型，搭建 `Platform/backend/` FastAPI + PostgreSQL + Alembic + `SKIP LOCKED` 队列与受控 OCCT Worker 骨架，同步编写阶段 1 客户样本盘点脚本。

@@ -140,3 +140,26 @@ OCCT 8.0 在清空环境变量后无隐式资源文件依赖，第 2 步沙盒�
 **对客交付与开发基线**　[相似度评判逻辑与标准说明](../Docs/STEP模型相似度评判逻辑与判断标准说明.md) · [系统开发报价单（¥266,340）](../Docs/STEP模型相似度对比与检索系统开发报价单.xlsx) · [详细开发设计文档](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md) · [详细开发计划](../.claude/Plan.md)
 
 **收口归档**　[采纳提案](STEP-SIM-004/PROPOSAL.md) · [终审及历轮审核](STEP-SIM-004/REVIEW.md) · [收口状态](STEP-SIM-004/STATUS.md)
+
+## STEP-SIM-005（2026-11-27）STEP-SIM-004 技术架构与代码逻辑修正：并发配额守卫、分层进程隔离、鉴权缓存与版本化特征
+
+**状态**　ADOPTED。Neon 第 2 轮独立复审收敛，用户已明确确认采纳收口。
+
+**决定**　面向单人独立开发，对 `STEP-SIM-004` 的底层技术框架、并发状态机、进程隔离与数据版本逻辑做四项工程修正（不改 `STEP-SIM-004` 功能范围与 `D1–D7` 业务口径）：
+
+- **配额 CAS 守卫与迟到结果拦截（S5-1）**：定义涵盖查询件解析与全部至多 $K$ 次精排的任务级总硬超时 `compare_job_timeout`，规定 `reaper_ttl > queue_wait_timeout + compare_job_timeout + 30s`；任务结果落库前在同一短事务内执行 `trial_reservations` `RESERVED → COMMITTED` CAS，若 `rowcount == 0` 严禁写入/返回 `compare_results`，直接置 `FAILED (QUOTA_EXPIRED)`；回滚与超时回收同样受 `status='RESERVED'` CAS 守卫。
+- **鉴权短时缓存与即时失效（S5-2）**：`users` 表新增 `auth_version` 列；仅缓存校验成功项（使用有界 LRU/TTL 内存缓存，如 `maxsize=10000`），键采用 `HMAC-SHA256(server_pepper, f"{user.id}:{user.auth_version}:{plaintext_password}")`；改密、禁用、触发锁定、改企或改权均同事务递增 `auth_version` 即时失效；未命中进 Argon2id 前叠加 IP + 账号双限流。
+- **两层进程隔离、真实依赖与单人轻量队列（S5-3）**：几何依赖修正为 `cadquery-ocp-novtk + numpy + scipy + libigl`（剔除 `pythonocc-core` 与 `trimesh`）；OCCT 解析/XDE/GLB 导出走常驻受控子进程池（硬超时强杀重建 + 每 $N$ 任务优雅轮换防 C++ 泄漏），至多 $K$ 次 ICP 在任务级 Worker 进程内复用查询件 `igl.AABB` 树顺序执行（受 `compare_job_timeout` 管控，不逐次起进程）；任务队列收口为 PostgreSQL `FOR UPDATE SKIP LOCKED` + 常驻 Python Worker 池（首期不引入 Redis/Celery）。
+- **版本化特征隔离（S5-4）**：独立建表 `model_features(model_id, feature_version, ...)`（`UNIQUE(model_id, feature_version)`）配全局 `active_feature_version` 指针；升级时后台全库重提取并在切换前对窗口期内新入库模型做增量查漏补齐，100% 就绪后再原子切换，杜绝新旧版本混算。
+- **其余补强**：客户端对比采用混合同步模式（限时等待 + 超时转 `202` 轮询）与有界队列（满额直接返回 `503 QUEUE_FULL`）；首期不跨企业共享底层几何缓存；阶段 1 补齐预登记正例集、找回率门槛与性能目标签认。
+
+**顺序**　按单人模块依赖顺序推进：阶段 1 冻结前端框架（Vue 3 / React）与唯一首期部署目标（Linux Docker / Windows Server），并行搭建 FastAPI + PostgreSQL + Alembic + `SKIP LOCKED` Worker 骨架并运行客户样本盘点脚本冻结超时/正例参数 → 阶段 2 OCCT/ICP 两层引擎与 `model_features` 版本化内核 → 阶段 3 多企业隔离、HMAC+`auth_version` 鉴权、五态审核台账与四态并发配额（在 PostgreSQL 上完成并发压测）→ 阶段 4 Three.js 工作台、客户端混合同步双 API 与六大验收矩阵。
+
+**未决假设（阶段 1 实测冻结）**
+
+- 客户真实 STEP 上的单件 OCCT 解析耗时、单次 `igl` ICP 耗时及 AP242 语义 PMI / 材料填写率，待阶段 1 实测后冻结 `K`、`compare_job_timeout`、`reaper_ttl` 与 `sync_wait_timeout`。
+- Top-5 找回率（占位建议 `>= 80%`）与同步对比响应（占位建议 `P95 <= 30s`）待阶段 1 确认客户 20–30 组预登记正例集并在阶段 2 出口实测基线后签认。
+
+**更新基线**　[详细开发设计文档](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md) · [详细开发计划](../Docs/STEP模型相似度对比与检索系统详细开发计划.md) · [当前待推进](../.claude/Plan.md)
+
+**收口归档**　[采纳提案](STEP-SIM-005/PROPOSAL.md) · [终审及历轮审核](STEP-SIM-005/REVIEW.md) · [收口状态](STEP-SIM-005/STATUS.md)
