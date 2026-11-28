@@ -46,7 +46,7 @@
 ```mermaid
 flowchart TB
     subgraph Clients["接入层（全链路 HTTPS）"]
-        WebUI["Web 前端工作台与管理后台\n(Vue/React + Three.js WebGL)"]
+        WebUI["Web 前端工作台与管理后台\n(React + Three.js WebGL)"]
         ExtClient["外部业务客户端 / CAD 插件\n(批量上传 API + 单件对比 API)"]
     end
 
@@ -452,7 +452,7 @@ stateDiagram-v2
 - **账号与企业**：`/api/v1/auth/register`、`/api/v1/auth/login`、`/api/v1/auth/bind-invite`、`/api/v1/admin/enterprises`、`/api/v1/admin/invite-codes`
 - **模型库与审核台**：`/api/v1/models`（按企业/名称/MD5/上传人/日期筛选）、`/api/v1/models/batch-upload`（服务端直传）、`/api/v1/admin/models/pending`、`/api/v1/admin/models/{id}/approve`、`/api/v1/admin/models/{id}/reject`、`/api/v1/models/{id}/glb`
 - **规则配置**：`/api/v1/rules/active`、`/api/v1/admin/rules`（新建/更新模板、校验总和 `100%`、切换生效规则）
-- **网页对比工作台**：`/api/v1/compare/upload`（异步创建任务）、`/api/v1/compare/jobs/{job_id}`（轮询进度与结果）、`/api/v1/compare/jobs/{job_id}/select`（点击候选选中回写 `selected_count`）
+- **网页对比工作台**：`/api/v1/compare/upload`（异步创建任务）、`/api/v1/compare/jobs/{job_id}`（轮询进度与结果）、`/api/v1/compare/jobs/{job_id}/select`（点击候选选中回写 `selected_count`）、`/api/v1/compare/jobs/{job_id}/query/glb` 与 `/api/v1/compare/jobs/{job_id}/models/{model_id}/glb`（任务所有者读取已完成任务的查询件与可见候选预览，候选使用任务冻结的特征版本）
 
 ---
 
@@ -491,4 +491,4 @@ stateDiagram-v2
 | 客户端对比返回数量与模式 | 默认混合同步返回 Top-5（等待 `25s–30s`，超时转 `202` 任务号轮询） | 客户技术对接人 |
 | 单文件上限 / 精排上限 $K$ / 单件 OCCT 超时 / 任务总超时 `compare_job_timeout` / 预占回收 `reaper_ttl` | `50 MB` / `K=50` / `60s` / `120s` / `>= 210s`（强制 `> 排队上限 + compare_job_timeout + 30s`） | 双方技术联合冻结 |
 | 预登记正例集 / Top-5 找回率门槛 / 同步响应目标 | 20–30 组正例对（不足时第 3 项只统计不设硬门槛）/ 阶段 2 出口跑基线签认（占位 `>= 80%`）/ 同步对比 `P95 <= 30s` | 双方联合签认 |
-| 前端框架与唯一首期部署目标 | Vue 3 或 React 二选一 / Linux Docker 或 Windows Server 服务化二选一 | 阶段 1 开工冻结 |
+| 前端框架与唯一首期部署目标 | React（2026-11-28 确认）/ Linux Docker 或 Windows Server 服务化二选一 | 首期部署目标待阶段 1 冻结 |

@@ -82,12 +82,14 @@ def run_ranked_compare_task(
     settings: "Settings", occt_pool: "OcctPool", engine: "Engine", vault: Path,
     query: Path, candidate_ids: Iterable[int], rule: "ComparisonRule", *,
     top_n: int | None = None, feature_version: str | None = None, query_payload: dict | None = None,
+    query_glb_target: Path | None = None,
 ) -> dict:
     """用单个版本精排已授权 candidate_ids，返回可靠榜、待复核、剪枝和截断诊断。
 
     query 是受信暂存 STEP；传入 query_payload 时 query 为该版本受信 NPZ，可按新规则直接重算。
     engine 提供版本与候选，vault 解析缓存路径，rule 是本次规则。top_n 和 feature_version 可覆写
-    本次名额和已固定的版本快照。版本或参数不符抛 ValueError，时限或进程故障抛 CompareTaskError，
+    本次名额和已固定的版本快照。query_glb_target 可在解析 STEP 时一并导出预览；复用 NPZ 时不可指定。
+    版本或参数不符抛 ValueError，时限或进程故障抛 CompareTaskError，
     STEP 读取失败抛 StepError，数据库与存储故障向上传播。
     """
     deadline = monotonic() + settings.compare_job_timeout
@@ -99,6 +101,8 @@ def run_ranked_compare_task(
     top_n = settings.default_top_n if top_n is None else top_n
     if type(top_n) is not int or top_n < 1:
         raise ValueError("可靠榜名额须为正整数")
+    if query_payload is not None and query_glb_target is not None:
+        raise ValueError("复用查询网格时不能生成查询预览")
     # 可变字典字段在派发前重新验证并复制，任务不受运行中的规则修改影响。
     snapshot = ComparisonRule.model_validate(rule.model_dump()).model_dump()
     with engine.connect() as connection:
@@ -134,7 +138,8 @@ def run_ranked_compare_task(
         if query_payload is None:
             try:
                 query_payload = occt_pool.extract_features(
-                    query, feature_version=version, mesh_target=query_mesh, deadline=deadline,
+                    query, feature_version=version, mesh_target=query_mesh, glb_target=query_glb_target,
+                    deadline=deadline,
                 )
             except StepError:
                 _check_deadline(deadline)
@@ -169,7 +174,10 @@ def _supervise(target, args, deadline, result_path) -> dict:
             process.start()
         except Exception:
             raise CompareTaskError("ERR_COMPARE_WORKER_START") from None
-        process.join(max(0, deadline - monotonic()))
+        while process.exitcode is None:
+            _check_deadline(deadline)
+            # Windows 定时等待可能比单调时钟截止略早返回，仍存活的子进程须继续等待。
+            process.join(max(0, deadline - monotonic()))
         _check_deadline(deadline)
         if process.exitcode != 0:
             raise CompareTaskError("ERR_COMPARE_WORKER_EXIT")

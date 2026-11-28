@@ -19,7 +19,7 @@ from sqlalchemy.engine import make_url
 
 from app.auth.service import AuthService
 from app.config import Settings
-from app.db.models import AuditLog, CompareJob, CompareResult, Model, TrialReservation, User
+from app.db.models import AuditLog, CompareJob, CompareResult, FeatureCatalog, Model, TrialReservation, User
 from app.db.session import build_engine
 from app.enterprise import EnterpriseService
 from app.main import create_app
@@ -181,6 +181,8 @@ class WorkflowTests(unittest.TestCase):
                                   files={"file": ("broken.step", b"invalid")})
             self.assertEqual(damaged.status_code, 422, damaged.text)
             self.assertEqual(damaged.json()["error_code"], "INVALID_STEP_FILE")
+            damaged_preview = f"/api/v1/compare/jobs/{damaged.json()['job_id']}/query/glb"
+            self.assertEqual(client.get(damaged_preview, auth=self.trial).status_code, 404)
             web = client.post("/api/v1/compare/upload", auth=self.members[1], files={"file": ("part.step", payload)})
             self.assertEqual(web.status_code, 202, web.text)
             self.assertEqual(self._poll(client, web.headers["Location"], self.members[1]).status_code, 200)
@@ -260,6 +262,58 @@ class WorkflowTests(unittest.TestCase):
             with self.engine.connect() as connection:
                 self.assertEqual(connection.execute(select(User.used_count, User.in_flight_count)
                                                     .where(User.id == self.trial_id)).one(), (0, 5))
+
+    def test_web_previews_follow_job_owner_visibility_and_feature_snapshot(self):
+        """真实 GLB 使用任务冻结版本，其他账号、客户端任务、非结果和撤回候选均不可读取。"""
+        payload = _DEMO.read_bytes()
+        with patch.dict(os.environ, self.env), TestClient(create_app()) as client:
+            visible = self._ingest(client, payload)["accepted"][0]["model_id"]
+            private = self._ingest(client, payload, user=1)["accepted"][0]["model_id"]
+            for model in (visible, private):
+                approved = client.post(f"/api/v1/admin/models/{model}/approve", auth=self.admin,
+                                       json={"public_demo": model == visible})
+                self.assertEqual(approved.status_code, 200, approved.text)
+                self._model_state(model, "APPROVED")
+            self._rule(client, "预览回归", 5)
+
+            submitted = client.post("/api/v1/compare/upload", auth=self.trial, files={"file": ("part.step", payload)})
+            self.assertEqual(submitted.status_code, 202, submitted.text)
+            path = submitted.headers["Location"]
+            result = self._poll(client, path, self.trial)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.json()["feature_version"], "1.0.0")
+            query_path = f"{path}/query/glb"
+            candidate_path = f"{path}/models/{visible}/glb"
+            for preview in (query_path, candidate_path):
+                loaded = client.get(preview, auth=self.trial)
+                self.assertEqual((loaded.status_code, loaded.content[:4]), (200, b"glTF"))
+                self.assertEqual(loaded.headers["content-type"], "model/gltf-binary")
+                self.assertEqual(loaded.headers["cache-control"], "private, no-store")
+                for other in (self.members[0], self.members[1], self.admin):
+                    self.assertEqual(client.get(preview, auth=other).status_code, 404)
+                self.assertEqual(client.get(preview).status_code, 401)
+            self.assertEqual(client.get(f"{path}/models/{private}/glb", auth=self.trial).status_code, 404)
+            part = client.get(query_path, auth=self.trial, headers={"Range": "bytes=0-3"})
+            self.assertEqual((part.status_code, part.content), (206, b"glTF"))
+            self.assertEqual(part.headers["cache-control"], "private, no-store")
+
+            client_job = client.post("/api/v1/client/compare", auth=self.members[0],
+                                     files={"file": ("part.step", payload)}, data={"mode": "async"})
+            self.assertEqual(client_job.status_code, 202, client_job.text)
+            self.assertEqual(self._poll(client, client_job.headers["Location"], self.members[0]).status_code, 200)
+            client_id = client_job.json()["job_id"]
+            self.assertEqual(client.get(f"/api/v1/compare/jobs/{client_id}/query/glb", auth=self.members[0]).status_code, 404)
+
+            with self.engine.begin() as connection:
+                # 模拟特征指针切换，工作台必须继续读取冻结的旧版本。
+                connection.execute(update(FeatureCatalog).values(active_feature_version="9.9.9"))
+            self.assertEqual(client.get(candidate_path, auth=self.trial).status_code, 200)
+            chosen = client.post(f"{path}/select", auth=self.trial, json={"model_id": str(visible)})
+            self.assertEqual(chosen.json(), {"selected": True})
+            with self.engine.begin() as connection:
+                connection.execute(update(Model).where(Model.id == visible).values(is_public_demo=False))
+            self.assertEqual(client.get(candidate_path, auth=self.trial).status_code, 404)
+            self.assertEqual(client.get(query_path, auth=self.trial).status_code, 200)
 
     def test_invite_limits_and_int64_cursors(self):
         """P2 回归覆盖邀请码独立限流与过大分页游标的规范 422。"""

@@ -1,9 +1,11 @@
 """按任务所属账号和模型范围查询结果及记录选中次数，依赖 SQLAlchemy 短事务。"""
 
+from pathlib import Path
+
 from sqlalchemy import exists, func, select, update
 
 from app.db.models import CompareJob, CompareResult, Model, User
-from app.repository.visibility import apply_visibility_scope
+from app.repository.visibility import apply_visibility_scope, visible_glb_query
 
 
 def read_comparison(engine, actor, job_id: int, source: str) -> dict | None:
@@ -52,6 +54,28 @@ def select_comparison_model(engine, actor, job_id: int, source: str, model_id: i
         if changed == 1:
             connection.execute(update(Model).where(Model.id == model_id).values(selected_count=Model.selected_count + 1))
         return changed == 1
+
+
+def comparison_preview_key(engine, actor, job_id: int, model_id: int | None = None) -> str | None:
+    """按网页任务返回已发布的 GLB 相对引用。actor 必须是任务所有者，model_id 缺省时读取查询件。
+
+    候选必须在结果中且仍然可见，使用任务绑定的特征版本。越权或无预览返回 None，数据库异常向上传播。
+    """
+    with engine.connect() as connection:
+        job = _owned_job(connection, actor, job_id, "WEB")
+        if job is None or job.status != "DONE":
+            return None
+        if model_id is None:
+            return Path(job.query_storage_path).with_suffix(".glb").as_posix()
+        version = job.rule_version_snapshot.get("feature_version")
+        if not version:
+            return None
+        # 始终按任务快照读取候选网格，避免特征切换后错用新版本 GLB 套旧对齐矩阵。
+        query = visible_glb_query(actor, model_id, version, target_enterprise_id=job.enterprise_id).where(
+            Model.status == "APPROVED",
+            exists().where(CompareResult.job_id == job.id, CompareResult.model_id == Model.id),
+        )
+        return connection.execute(query).scalar_one_or_none()
 
 
 def _owned_job(connection, actor, job_id, source, *, lock=False):

@@ -7,7 +7,7 @@ from time import monotonic
 from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Path as RoutePath, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
@@ -15,8 +15,9 @@ from starlette.datastructures import UploadFile
 
 from app.auth.cache import AuthCacheValue
 from app.compare.rule import ComparisonRule
+from app.db.model_features import vault_path
 from app.db.models import Model, SimilarityRule
-from app.repository.compare_history import read_comparison, select_comparison_model
+from app.repository.compare_history import comparison_preview_key, read_comparison, select_comparison_model
 from app.repository.model_intake import accept_model_batch, review_model, upload_scope
 from app.repository.quota import QuotaError, enqueue_compare
 from app.repository.rules import RuleUnavailable, activate_rule, active_rule_snapshot, rule_record, save_rule
@@ -252,6 +253,17 @@ def install_workflow_routes(router, current_user, require_admin, password_user) 
         """按账号读取网页任务结果，进行中返回 202，越权或任务不存在时返回 404。"""
         return _poll(request, actor, job_id, "WEB")
 
+    @router.get("/compare/jobs/{job_id}/query/glb", response_class=FileResponse)
+    def query_preview(request: Request, job_id: PathId, actor: AuthCacheValue = Depends(current_user)):
+        """返回 actor 所有的已完成网页任务 job_id 的查询预览。越权或无预览返回 404，存储未配置返 503。"""
+        return _preview(request, actor, job_id)
+
+    @router.get("/compare/jobs/{job_id}/models/{model_id}/glb", response_class=FileResponse)
+    def candidate_preview(request: Request, job_id: PathId, model_id: PathId,
+                          actor: AuthCacheValue = Depends(current_user)):
+        """返回网页任务 job_id 的 model_id 候选版本预览。越权或无预览返回 404，存储未配置返 503。"""
+        return _preview(request, actor, job_id, model_id)
+
     @router.post("/client/compare/{job_id}/select")
     def select_client(request: Request, job_id: PathId, body: SelectionInput,
                       actor: AuthCacheValue = Depends(current_user)):
@@ -286,6 +298,21 @@ def _review(request, actor, model_id, **values):
 def _poll(request, actor, job_id, source):
     result = read_comparison(request.app.state.engine, actor, job_id, source)
     return _response(result, request.url.path) if result is not None else _error("JOB_NOT_FOUND", 404)
+
+
+def _preview(request, actor, job_id, model_id=None):
+    key = comparison_preview_key(request.app.state.engine, actor, job_id, model_id)
+    if key is None:
+        return _error("PREVIEW_NOT_FOUND", 404)
+    try:
+        path = vault_path(_vault(request), key)
+        if path.is_file():
+            return FileResponse(path, media_type="model/gltf-binary", headers={"Cache-Control": "private, no-store"})
+    except UploadError as error:
+        return _error(str(error), error.status)
+    except (ValueError, OSError):
+        pass
+    return _error("PREVIEW_NOT_FOUND", 404)
 
 
 def _select(request, actor, job_id, source, model_id):

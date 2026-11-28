@@ -105,8 +105,19 @@ def vault_path(vault: Path, key: str) -> Path:
     if not relative.parts or relative.drive or relative.root:
         raise ValueError("缓存路径必须相对于存储根目录")
     path = (root / relative).resolve()
-    if not path.is_relative_to(root) or path == root:
+    # Windows 并发创建目录时，同一位置的解析结果可能只有一侧带扩展路径前缀。
+    # 统一用于比较的命名空间，实际读写仍保留 resolve 得到的原始路径。
+    root_scope, path_scope = _vault_scope(root), _vault_scope(path)
+    if path_scope == root_scope or not path_scope.is_relative_to(root_scope):
         raise ValueError("缓存路径超出存储根目录")
+    return path
+
+
+def _vault_scope(path: Path) -> Path:
+    if path.drive.casefold().startswith("\\\\?\\unc\\"):
+        return Path("\\\\" + str(path)[8:])
+    if path.drive.startswith("\\\\?\\") and len(path.drive) == 6 and path.drive[4:].endswith(":"):
+        return Path(str(path)[4:])
     return path
 
 

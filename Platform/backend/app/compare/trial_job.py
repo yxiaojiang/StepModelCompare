@@ -1,5 +1,6 @@
 """连接常驻队列、授权候选、精排及事务结算，依赖 PostgreSQL、OCCT 池和受信存储卷。"""
 
+import logging
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -16,6 +17,9 @@ from app.repository.quota import (
     QuotaError, commit_enterprise_results, commit_trial_results, finish_failed_compare, job_actor, require_job_identity,
 )
 from app.repository.visibility import VisibilityUser, visible_candidate_query
+
+
+_LOG = logging.getLogger("step_platform")
 
 
 def run_trial_compare_job(
@@ -35,6 +39,8 @@ def run_claimed_compare_job(settings: Settings, pool: OcctPool, engine: Engine, 
 
 
 def _run(settings, pool, engine, vault, query, job_id, *, require_trial):
+    preview = None
+    published = False
     try:
         with engine.connect() as connection:
             job = connection.execute(select(CompareJob).where(
@@ -63,10 +69,13 @@ def _run(settings, pool, engine, vault, query, job_id, *, require_trial):
             candidate_ids = connection.execute(visible_candidate_query(actor, job.enterprise_id)).scalars().all()
         if query is None:
             query = vault_path(vault, job.query_storage_path)
+            if job.source == "WEB":
+                # UUID 原件与预览一一对应，预览随同次 OCCT 网格生成，只有成功结算才可读取。
+                preview = vault_path(vault, Path(job.query_storage_path).with_suffix(".glb").as_posix())
         snapshot = job.rule_version_snapshot
         ranking = run_ranked_compare_task(
             settings, pool, engine, vault, query, candidate_ids, ComparisonRule.model_validate(snapshot["rule"]),
-            feature_version=snapshot["feature_version"], top_n=snapshot.get("top_n"),
+            feature_version=snapshot["feature_version"], top_n=snapshot.get("top_n"), query_glb_target=preview,
         )
         rows = [
             {
@@ -78,9 +87,10 @@ def _run(settings, pool, engine, vault, query, job_id, *, require_trial):
             for group in ("results", "needs_review") for row in ranking[group]
         ]
         publish = commit_trial_results if trial else commit_enterprise_results
-        return publish(
+        published = publish(
             engine, job_id, rows, termination=ranking["termination"], max_untested_upper=ranking["max_untested_upper"],
         )
+        return published
     except QuotaError as error:
         finish_failed_compare(engine, job_id, str(error))
         return False
@@ -90,3 +100,9 @@ def _run(settings, pool, engine, vault, query, job_id, *, require_trial):
     except Exception:
         finish_failed_compare(engine, job_id, "COMPARE_FAILED")
         raise
+    finally:
+        if preview is not None and not published:
+            try:
+                preview.unlink(missing_ok=True)
+            except OSError:
+                _LOG.warning("无法清理未发布的对比预览")

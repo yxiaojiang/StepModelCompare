@@ -31,7 +31,8 @@
 - [ ] **1.3 客户端 API 与部署环境冻结**
   - 确认客户端调用形态、峰值并发、Top-1/Top-N 返回结构、混合同步模式（`sync_wait_timeout` 默认 `25s–30s` 超时转 `202` 轮询）及选中次数回传契约；
   - 冻结有界队列上限 `max_queue_depth`、单文件上限（如 `50 MB`）、精排上限 $K$（如 `50`）、单件 OCCT 硬超时（如 `60s`）、任务级总硬超时 `compare_job_timeout`（如 `120s`）、内存/面片熔断上限及预占超时回收阈值 `reaper_ttl`（强制 `> 排队上限 + compare_job_timeout + 30s`）；
-  - 获取目标服务器环境清单（OS、CPU/内存、磁盘、HTTPS 证书），据此二选一冻结唯一首期部署目标（Linux Docker / Windows Server）；冻结前端框架（Vue 3 / React）。
+  - 获取目标服务器环境清单（OS、CPU/内存、磁盘、HTTPS 证书），据此二选一冻结唯一首期部署目标（Linux Docker / Windows Server）。
+  - ~~前端框架已选定 React（2026-11-28）。~~
 - [ ] **阶段 1 放行条件**：真实样本盘点报告输出，上述参数与契约经客户书面/纪要确认冻结。
 
 ---
@@ -92,11 +93,12 @@
 
 **目录**：`Platform/frontend/`、`Platform/backend/app/client_api/`、`Platform/client_sdk/`、`Platform/deploy/`
 
-- [ ] **4.1 服务端三维图形化对比工作台（13 人/天）**
-  - 集成 Three.js 本地打包查看器：双视口同步旋转缩放并排对比、通过对齐校验后的同尺度双色半透明叠加（$C_{\text{新}} T C_{\text{旧}}^{-1}$）与单模显隐；
+- [x] ~~**4.1 服务端三维图形化对比工作台（13 人/天）**~~
+  - ~~集成 React 工作台和本地打包的 Three.js 查看器，支持同尺度双视口同步旋转缩放、通过门禁后的双色半透明叠加（$C_{\text{新}} T C_{\text{旧}}^{-1}$）与单模显隐。~~
   - ~~交付 Web 上传、异步轮询、候选/待复核结果和选中幂等回写 `selected_count` 的服务端接口。~~
-  - 接通工作台上传、进度轮询和选中回传交互，按任务授权交付查询件 GLB，展示候选列表、「待复核」折叠区（强制禁用叠加）及分项误差、有效权重和单方缺失详情；
-  - 固定展示工程边界提示文案。
+  - ~~接通工作台上传、进度轮询、结果展示和选中回传。按任务授权读取查询件和候选 GLB，候选使用任务冻结的特征版本。~~
+  - ~~展示「待复核」折叠区并禁用叠加，展示分项误差、有效权重和单方缺失详情，固定展示工程边界提示。~~
+  - 交付证据见 [STEP-PLAT-007 独立审核归档](../CRDocs/archive/2026-11-28_STEP-PLAT-007_React三维对比工作台/INDEX.md)。
 - [ ] **4.2 客户端双 API、安全限流与调用示例（11 人/天）**
   - ~~交付 `POST /api/v1/auth/token`、`POST /api/v1/client/models/batch-upload`、`POST /api/v1/client/compare`、`GET /api/v1/client/compare/{job_id}`、`POST /api/v1/client/compare/{job_id}/select` 及 OpenAPI 接口描述。~~
   - ~~实现 URL Query 凭证拦截、应用日志脱敏、进程内频率限制及单文件、批次文件数和 multipart 请求体上限。~~

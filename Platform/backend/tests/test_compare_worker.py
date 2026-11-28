@@ -7,8 +7,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import monotonic, sleep
 import unittest
+from unittest.mock import Mock, patch
 
-from app.compare.worker import CompareTaskError, run_compare_task
+from app.compare.worker import CompareTaskError, _supervise, run_compare_task
 from app.config import Settings
 from app.geometry_engine.step_input import ParseLimits, StepError
 from app.geometry_engine.worker_runner import OcctPool
@@ -127,6 +128,22 @@ class CompareWorkerTests(unittest.TestCase):
             self.assertNotIn(pid, {child.pid for child in mp.active_children()})
             subsequent = run_compare_task(settings, pool, self._query, {1: self._mesh}, _distance)
             self.assertNotEqual(subsequent[0]["measurements"]["pid"], pid)
+
+    def test_supervisor_continues_waiting_after_early_join(self):
+        """定时等待提前返回且子进程仍存活时，继续等待并读取正常结果。"""
+        process = Mock(pid=1, exitcode=None)
+        process.is_alive.return_value = False
+        result = self._folder / "result.json"
+        result.write_text('{"items":[]}', encoding="utf-8")
+
+        def early_join(timeout=None):
+            if process.join.call_count == 2:
+                process.exitcode = 0
+
+        process.join.side_effect = early_join
+        with patch("app.compare.worker.mp.get_context") as context:
+            context.return_value.Process.return_value = process
+            self.assertEqual(_supervise(_distance, (), monotonic() + 1, result), {"items": []})
 
     def test_compute_crash_is_reported_and_next_task_runs(self):
         """计算进程异常退出时返回固定错误，之后可继续执行独立对比任务。"""

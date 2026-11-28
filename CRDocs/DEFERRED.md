@@ -12,7 +12,7 @@
    - **剩余验收条件**：目标部署环境联通上传、异步调度、回收和 HTTP 结果交付，验证并发消费、有效/损坏件混合 10 路、迟到结果拦截以及多进程鉴权限流。
 3. **`PLAT-DEF-003`（OPEN｜目标部署环境实测）**
    - **原因**：阶段 1 尚未获取客户服务器清单并冻结唯一首期部署目标（Linux Docker 或 Windows Server）。
-   - **验收条件**：在冻结的目标环境完成 OCCT 子进程内存限制（Linux `RLIMIT_AS`/cgroup 或 Windows Job Object）、HTTPS 凭证禁入 URL、以及整机六大验收矩阵实测。
+   - **验收条件**：在冻结的目标环境完成 OCCT 子进程内存限制（Linux `RLIMIT_AS`/cgroup 或 Windows Job Object）、HTTPS 凭证禁入 URL、以及整机六大验收矩阵实测。工作台还需核对目标浏览器/GPU 的 WebGL 表现、查询原件与 GLB 的保留期、容量告警及孤立文件处置。
 
 ## STEP-PLAT-003 非阻断跟踪项
 
@@ -32,3 +32,7 @@
 ## STEP-PLAT-006 非阻断跟踪项
 
 - **`PLAT-006-P2-1`（OPEN｜管理员直传审计、表单鉴权前置防大包与 Starlette 私有属性兼容）** 后续接入管理后台审计页时补记管理员直传 `AuditLog`；目标部署环境在反向代理层收紧无 Header 表单上传的未认证限流/超时（随 `PLAT-DEF-003`）；升级 Starlette/FastAPI 时回归校验 `uploads.py:65` 异常文件清理兼容。见 [STEP-PLAT-006 独立审核](archive/2026-11-28_STEP-PLAT-006_五态入库与对比调度/REVIEW.md)。
+
+## STEP-PLAT-007 非阻断跟踪项
+
+- **`PLAT-007-P2-1`（OPEN｜Windows 高负载下 `WorkflowTests._poll` 25 秒硬超时偶发抖动）** `test_workflow_api.py:113-120` 的 25 秒硬超时在全量并发运行 Windows `spawn` + OCCT + D5 精排时偶发偏紧，后续切片适度放宽测试轮询上限即可。见 [STEP-PLAT-007 独立审核](archive/2026-11-28_STEP-PLAT-007_React三维对比工作台/REVIEW.md)。

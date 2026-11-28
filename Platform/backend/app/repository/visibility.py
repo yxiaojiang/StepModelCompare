@@ -82,9 +82,9 @@ def visible_candidate_query(current_user, target_enterprise_id=None, *, model_id
     return apply_visibility_scope(query, current_user, target_enterprise_id)
 
 
-def visible_glb_query(current_user, model_id: int, feature_version: str) -> Select:
-    """构造指定模型及版本的就绪预览引用查询；不可见行为空，未知角色抛 VisibilityError。"""
+def visible_glb_query(current_user, model_id: int, feature_version: str, *, target_enterprise_id=None) -> Select:
+    """查询 model_id 指定版本的就绪预览，可收窄管理员的企业范围；不可见行为空，角色无效抛 VisibilityError。"""
     query = select(ModelFeature.glb_path).join(Model, Model.id == ModelFeature.model_id).where(
         Model.id == model_id, ModelFeature.feature_version == feature_version, ModelFeature.status == "READY",
     )
-    return apply_visibility_scope(query, current_user)
+    return apply_visibility_scope(query, current_user, target_enterprise_id)

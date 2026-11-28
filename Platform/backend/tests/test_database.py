@@ -135,6 +135,31 @@ def _assert_constraints(case, engine):
         connection.execute(rule.values(scope="ENTERPRISE"))
 
 
+class VaultPathTests(unittest.TestCase):
+    """覆盖存储根目录的路径表示差异，避免首次并发上传误判为越界。"""
+
+    @unittest.skipUnless(os.name == "nt", "扩展路径前缀属于 Windows")
+    def test_extended_windows_paths_keep_vault_boundary(self):
+        """Windows 普通和扩展形式指向同一存储卷；真正越界及根本身仍拒绝。"""
+        key = "queries/part.step"
+        cases = (
+            (r"D:\vault", r"\\?\D:\vault\queries\part.step", True),
+            (r"\\?\D:\vault", r"D:\vault\queries\part.step", True),
+            (r"\\server\share\vault", r"\\?\UNC\SERVER\share\vault\queries\part.step", True),
+            (r"D:\vault", r"\\?\D:\vault-sibling\queries\part.step", False),
+            (r"D:\vault", r"\\?\D:\vault", False),
+        )
+        for root, resolved, allowed in cases:
+            with self.subTest(root=root, resolved=resolved), patch.object(Path, "resolve", side_effect=[
+                Path(root), Path(resolved),
+            ]):
+                if allowed:
+                    self.assertEqual(vault_path(Path(root), key), Path(resolved))
+                else:
+                    with self.assertRaises(ValueError):
+                        vault_path(Path(root), key)
+
+
 class _VersionFixturePool:
     """替代几何层，写出占位文件用于真实 PostgreSQL 事务测试。可在解析完成前人为挂起。"""
 
