@@ -31,8 +31,4 @@
 
 ## STEP-PLAT-006 非阻断跟踪项
 
-- **`PLAT-006-P2-1`（OPEN｜管理员直传审计、表单鉴权前置防大包与 Starlette 私有属性兼容）** 后续接入管理后台审计页时补记管理员直传 `AuditLog`；目标部署环境在反向代理层收紧无 Header 表单上传的未认证限流/超时（随 `PLAT-DEF-003`）；升级 Starlette/FastAPI 时回归校验 `uploads.py:65` 异常文件清理兼容。见 [STEP-PLAT-006 独立审核](archive/2026-11-28_STEP-PLAT-006_五态入库与对比调度/REVIEW.md)。
-
-## STEP-PLAT-007 非阻断跟踪项
-
-- **`PLAT-007-P2-1`（OPEN｜Windows 高负载下 `WorkflowTests._poll` 25 秒硬超时偶发抖动）** `test_workflow_api.py:113-120` 的 25 秒硬超时在全量并发运行 Windows `spawn` + OCCT + D5 精排时偶发偏紧，后续切片适度放宽测试轮询上限即可。见 [STEP-PLAT-007 独立审核](archive/2026-11-28_STEP-PLAT-007_React三维对比工作台/REVIEW.md)。
+- **`PLAT-006-P2-1`（OPEN｜表单鉴权前置防大包与 Starlette 私有属性兼容）** 目标部署环境在反向代理层收紧无 Header 表单上传的未认证限流/超时（随 `PLAT-DEF-003`）。升级 Starlette/FastAPI 时回归校验 `uploads.py:65` 异常文件清理兼容。见 [STEP-PLAT-006 独立审核](archive/2026-11-28_STEP-PLAT-006_五态入库与对比调度/REVIEW.md)。

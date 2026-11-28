@@ -4,11 +4,11 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from fastapi import Depends, HTTPException, Path as RoutePath, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
@@ -47,6 +47,29 @@ class ApproveInput(BaseModel):
     """审核通过时可由系统管理员将模型标记为正式公开演示来源。"""
 
     public_demo: bool = False
+
+
+class BatchReviewInput(BaseModel):
+    """校验最多一页的审核选择与操作参数，整批共用决定，逐件独立提交。"""
+
+    model_config = ConfigDict(extra="forbid")
+    model_ids: list[Annotated[int, Field(gt=0, le=_MAX_ID)]] = Field(min_length=1, max_length=100)
+    action: Literal["approve", "reject"]
+    public_demo: bool = False
+    reason: str | None = Field(default=None, max_length=512)
+
+    @model_validator(mode="after")
+    def validate_review(self) -> Self:
+        """校验审核参数并返回请求实例，重复 ID、空驳回原因或矛盾参数抛 ValueError。"""
+        if len(set(self.model_ids)) != len(self.model_ids):
+            raise ValueError("每个模型只能选择一次")
+        if self.action == "reject":
+            self.reason = (self.reason or "").strip()
+            if not self.reason or self.public_demo:
+                raise ValueError("驳回须填写原因，且不可标记公开演示")
+        elif self.reason is not None:
+            raise ValueError("通过操作不接收驳回原因")
+        return self
 
 
 class SelectionInput(BaseModel):
@@ -125,6 +148,24 @@ def install_workflow_routes(router, current_user, require_admin, password_user) 
             query = query.where(Model.enterprise_id == enterprise_id)
         with request.app.state.engine.connect() as connection:
             return [dict(row) for row in connection.execute(query.order_by(Model.id).limit(100)).mappings()]
+
+    @router.post("/admin/models/batch-review")
+    def batch_review(request: Request, body: BatchReviewInput,
+                     actor: AuthCacheValue = Depends(require_admin)) -> dict:
+        """按提交顺序返回各件审核结果或 409 冲突；非管理员返回 403，无效批次返回 422。"""
+        directory = request.app.state.settings.model_vault
+        vault = Path(directory) if directory else None
+        results = []
+        for model_id in body.model_ids:
+            result = review_model(
+                request.app.state.engine, vault, actor, model_id, approve=body.action == "approve",
+                reason=body.reason, public_demo=body.public_demo,
+            )
+            if result is None:
+                results.append({"model_id": model_id, "status_code": 409, "error_code": "MODEL_NOT_PENDING"})
+            else:
+                results.append({**result, "status_code": 200})
+        return {"results": results}
 
     @router.post("/admin/models/{model_id}/approve")
     def approve(request: Request, model_id: PathId, body: ApproveInput | None = None,

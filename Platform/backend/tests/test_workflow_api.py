@@ -19,7 +19,7 @@ from sqlalchemy.engine import make_url
 
 from app.auth.service import AuthService
 from app.config import Settings
-from app.db.models import AuditLog, CompareJob, CompareResult, FeatureCatalog, Model, TrialReservation, User
+from app.db.models import AuditLog, CompareJob, CompareResult, FeatureCatalog, Model, ModelFeature, TrialReservation, User
 from app.db.session import build_engine
 from app.enterprise import EnterpriseService
 from app.main import create_app
@@ -110,14 +110,183 @@ class WorkflowTests(unittest.TestCase):
             sleep(0.05)
         self.fail(f"模型没有进入 {target}，最终观察到 {seen}")
 
-    def _poll(self, client, url, actor):
-        until = monotonic() + 25
+    def _poll(self, client, url, actor=None, *, headers=None):
+        until = monotonic() + 45
         while monotonic() < until:
-            response = client.get(url, auth=actor)
+            response = client.get(url, auth=actor, headers=headers)
             if response.status_code != 202:
                 return response
             sleep(0.05)
         self.fail("轮询超时")
+
+    def test_admin_ledger_and_batch_review(self):
+        """复测 int64 游标、五态筛选、批量冲突、直传审计及历史敏感详情的排除。"""
+        env = dict(self.env, STEP_PLATFORM_RUN_QUEUE_WORKERS="false")
+        path = "/api/v1/admin/models"
+        with patch.dict(os.environ, env), TestClient(create_app()) as client:
+            payload = _DEMO.read_bytes()
+            pending = self._ingest(client, payload, name="First_100%.step")["accepted"][0]
+            rejected = self._ingest(client, payload + b"\n", name="Second.step")["accepted"][0]
+            direct_path = "/api/v1/models/batch-upload"
+            direct_params = {"enterprise_id": self.teams[1]}
+            files = {"files[]": ("direct.step", payload)}
+            uploaded = client.post(direct_path, auth=self.admin, params=direct_params, files=files)
+            self.assertEqual(uploaded.status_code, 202, uploaded.text)
+            direct = uploaded.json()["accepted"][0]
+            self.assertEqual(direct["status"], "INDEXING")
+            duplicate = client.post(direct_path, auth=self.admin, params=direct_params, files=files)
+            self.assertEqual(len(duplicate.json()["skipped_duplicates"]), 1)
+
+            with self.engine.connect() as connection:
+                uploader_id = connection.execute(select(Model.uploader_id).where(Model.id == pending["model_id"])).scalar_one()
+            filtered = client.get(path, auth=self.admin, params={
+                "status": "PENDING", "enterprise_id": self.teams[0], "name": "first_100%",
+                "md5": pending["md5"].upper(), "uploader_id": uploader_id,
+            })
+            self.assertEqual(filtered.status_code, 200, filtered.text)
+            row, = filtered.json()
+            self.assertEqual(row["id"], pending["model_id"])
+            self.assertEqual((row["uploader_name"], row["selected_count"], row["feature_payload"]),
+                             (self.members[0][0], 0, None))
+            self.assertTrue(row["uploaded_at"])
+            for status, count in (("PENDING", 2), ("INDEXING", 1), ("APPROVED", 0), ("PARSE_FAILED", 0), ("REJECTED", 0)):
+                self.assertEqual(len(client.get(path, auth=self.admin, params={"status": status}).json()), count)
+            self.assertEqual(client.get(path, auth=self.admin, params={"after_id": 2**63 - 1}).json(), [])
+            self.assertEqual(client.get(path, auth=self.admin, params={"after_id": 2**63}).status_code, 422)
+            self.assertEqual(client.get(path, auth=self.admin, params={"status": "ANY"}).status_code, 422)
+
+            batch = path + "/batch-review"
+            rejected_id = rejected["model_id"]
+            for body in (
+                {"model_ids": [rejected_id], "action": "reject", "reason": "  "},
+                {"model_ids": [rejected_id], "action": "reject", "reason": "损坏", "public_demo": True},
+                {"model_ids": [rejected_id, rejected_id], "action": "approve"},
+                {"model_ids": [2**63], "action": "approve"},
+            ):
+                self.assertEqual(client.post(batch, auth=self.admin, json=body).status_code, 422)
+            approved = client.post(batch, auth=self.admin, json={
+                "model_ids": [str(pending["model_id"]), direct["model_id"], 2**63 - 1],
+                "action": "approve", "public_demo": True,
+            })
+            self.assertEqual(approved.status_code, 200, approved.text)
+            self.assertEqual([row["status_code"] for row in approved.json()["results"]], [200, 409, 409])
+            gate = Barrier(2)
+
+            def reject_once(_):
+                gate.wait(timeout=5)
+                response = client.post(batch, auth=self.admin, json={
+                    "model_ids": [rejected_id], "action": "reject", "reason": "  请重提  ",
+                })
+                self.assertEqual(response.status_code, 200, response.text)
+                return response.json()["results"][0]["status_code"]
+
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                self.assertCountEqual(workers.map(reject_once, range(2)), [200, 409])
+            reviewed = client.get(path, auth=self.admin, params={"after_id": pending["model_id"]}).json()
+            self.assertEqual([row["id"] for row in reviewed], [rejected_id, direct["model_id"]])
+            self.assertEqual(reviewed[0]["reject_or_error_reason"], "请重提")
+            self.assertTrue(client.get(path, auth=self.admin, params={"md5": pending["md5"],
+                            "enterprise_id": self.teams[0]}).json()[0]["is_public_demo"])
+
+            with self.engine.begin() as connection:
+                connection.execute(AuditLog.__table__.insert().values(
+                    action="INVITE_CREATED", target_type="invite", target_id=15,
+                    detail_json={"nested": {"password": "test-password", "access_token": "test-token"},
+                                 "note": "test-invite-code"},
+                ))
+            audit_path = "/api/v1/admin/audit-logs"
+            audit = client.get(audit_path, auth=self.admin)
+            for secret in ("test-password", "test-token", "test-invite-code", "detail_json"):
+                self.assertNotIn(secret, audit.text)
+            self.assertCountEqual(
+                ((row["action"], row["target_id"]) for row in audit.json() if row["target_type"] == "model"),
+                [("MODEL_DIRECT_UPLOADED", direct["model_id"]), ("MODEL_APPROVED_FOR_INDEXING", pending["model_id"]),
+                 ("MODEL_REJECTED", rejected_id)],
+            )
+            cursor = audit.json()[-2]["id"]
+            self.assertEqual(client.get(audit_path, auth=self.admin, params={"after_id": cursor}).json(), audit.json()[-1:])
+            self.assertEqual(client.get(audit_path, auth=self.admin, params={"after_id": 2**63}).status_code, 422)
+
+    def test_four_role_permissions_and_candidate_exclusion(self):
+        """通过实际 ASGI 鉴权和 PostgreSQL Worker 验证四角色及非入库件零命中。"""
+        ent_admin = ("enterprise-admin", "test-enterprise-password")
+        auth = AuthService(self.engine, "p" * 32)
+        identity = auth.register(*ent_admin)
+        auth.set_role_or_enterprise(identity.user_id, role="ENT_ADMIN", enterprise_id=self.teams[0])
+        payload = _DEMO.read_bytes()
+        with patch.dict(os.environ, self.env), TestClient(create_app()) as client:
+            self._rule(client, "全局", 1)
+            public = self._ingest(client, payload)["accepted"][0]["model_id"]
+            other = self._ingest(client, payload, user=1)["accepted"][0]["model_id"]
+            pending = self._ingest(client, payload + b"\n", name="pending.step")["accepted"][0]["model_id"]
+            failed = self._ingest(client, b"ISO-10303-21;\ninvalid", name="broken.step")["accepted"][0]["model_id"]
+            for model, state in ((public, "APPROVED"), (other, "APPROVED"), (failed, "PARSE_FAILED")):
+                response = client.post(f"/api/v1/admin/models/{model}/approve", auth=self.admin,
+                                       json={"public_demo": model != other})
+                self.assertEqual(response.status_code, 200, response.text)
+                self._model_state(model, state)
+
+            # 模拟仍有旧的就绪特征和公开标记，确保状态守卫本身挡住候选和预览。
+            table = ModelFeature.__table__
+            columns = [table.c.feature_version, table.c.feature_payload, table.c.sample_points_path,
+                       table.c.glb_path, table.c.status]
+            with self.engine.begin() as connection:
+                feature = connection.execute(select(*columns).where(table.c.model_id == public)).mappings().one()
+                connection.execute(table.insert().values(model_id=pending, **feature))
+                connection.execute(table.update().where(table.c.model_id == failed).values(**feature))
+                connection.execute(update(Model).where(Model.id.in_([pending, failed])).values(is_public_demo=True))
+
+            for role, credentials, visible, ledger, target in (
+                ("SYS_ADMIN", self.admin, {public, other}, None, None),
+                ("ENT_ADMIN", ent_admin, {public}, {public, pending, failed}, self.teams[1]),
+                ("ENT_USER", self.members[1], {other}, {other}, self.teams[0]),
+                ("TRIAL_USER", self.trial, {public}, None, self.teams[1]),
+            ):
+                with self.subTest(role=role):
+                    login = client.post("/api/v1/auth/login", json={"username": credentials[0], "password": credentials[1]})
+                    self.assertEqual(login.json()["role"], role, login.text)
+                    headers = {"Authorization": "Bearer " + login.json()["access_token"]}
+                    admin_status = 200 if role == "SYS_ADMIN" else 403
+                    for endpoint in ("models", "models/pending", "audit-logs", "rules", "enterprises", "invite-codes"):
+                        self.assertEqual(client.get(f"/api/v1/admin/{endpoint}", headers=headers).status_code, admin_status)
+                    batch = client.post("/api/v1/admin/models/batch-review", headers=headers,
+                                        json={"model_ids": [public], "action": "approve"})
+                    self.assertEqual(batch.status_code, admin_status)
+                    if role != "SYS_ADMIN":
+                        for endpoint, body in (
+                            ("enterprises", {"name": "越权企业", "code": "forbidden"}),
+                            ("invite-codes", {"code": "forbidden", "enterprise_id": target, "max_uses": 1,
+                                              "expires_at": "2099-01-01T00:00:00Z"}),
+                            ("rules", {"name": "越权规则", "rule": {"weights": {f"D{i}": 100 if i == 1 else 0
+                                                                             for i in range(1, 8)}}}),
+                            (f"models/{pending}/approve", {"public_demo": True}),
+                            (f"models/{pending}/reject", {"reason": "越权驳回"}),
+                        ):
+                            self.assertEqual(client.post(f"/api/v1/admin/{endpoint}", headers=headers, json=body).status_code, 403)
+                        self.assertEqual(client.delete("/api/v1/admin/invite-codes/1", headers=headers).status_code, 403)
+                        self.assertEqual(client.post("/api/v1/admin/rules/1/activate", headers=headers).status_code, 403)
+                        response = client.post("/api/v1/models/batch-upload", headers=headers, params={"enterprise_id": target},
+                                               files={"files[]": ("forbidden.step", payload)})
+                        self.assertEqual(response.status_code, 403)
+                    if role != "TRIAL_USER":
+                        self.assertEqual(client.post("/api/v1/auth/bind-invite", headers=headers,
+                                                     json={"code": "not-a-real-code"}).status_code, 403)
+                    param = {"enterprise_id": target} if target is not None else {}
+                    response = client.get("/api/v1/enterprise/models", headers=headers, params=param)
+                    if ledger is None:
+                        self.assertEqual(response.status_code, 403)
+                    else:
+                        self.assertEqual({row["id"] for row in response.json()}, ledger)
+                    for model in {public, other, pending, failed} - visible:
+                        if role != "SYS_ADMIN":
+                            self.assertEqual(client.get(f"/api/v1/models/{model}", headers=headers).status_code, 404)
+                            self.assertEqual(client.get(f"/api/v1/models/{model}/glb", headers=headers).status_code, 404)
+                    job = client.post("/api/v1/compare/upload", headers=headers, params=param, files={"file": ("match.step", payload)})
+                    self.assertEqual(job.status_code, 202, job.text)
+                    done = self._poll(client, job.headers["Location"], headers=headers)
+                    self.assertEqual(done.status_code, 200, done.text)
+                    rows = done.json()["candidates"] + done.json()["needs_review_items"]
+                    self.assertEqual({row["model_id"] for row in rows}, visible, done.text)
 
     def test_five_state_and_hybrid_workflow(self):
         """真实 Demo 原件经两层 Worker 入库与对比，覆盖五态、租户隔离、规则快照和 200/202。"""

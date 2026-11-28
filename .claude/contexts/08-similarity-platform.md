@@ -28,9 +28,11 @@
 
 - `STEP-PLAT-007`（4.1）已独立审核通过。React 工作台已联通上传、轮询、候选与分项、同步双视口和选中回传。成功 Web 任务的查询件 GLB 随原件存放，候选按任务冻结的特征版本及实时可见性读取。仅通过门禁的右手系刚体矩阵可用于叠加。Windows 并发路径校验与 Worker 等待已复测。见 [独立审核归档](../../CRDocs/archive/2026-11-28_STEP-PLAT-007_React三维对比工作台/INDEX.md)。
 
+- `STEP-PLAT-008` 可视化管理后台独立通过。五态台账、逐件审核和直传审计已接通，企业台账按登录身份限定本企业，检索和预览继续使用已入库状态守卫。真实 PostgreSQL 18.7 的四角色 ASGI 回归通过。见 [审核归档](../../CRDocs/archive/2026-11-28_STEP-PLAT-008_可视化管理后台/INDEX.md)。
+
 ## 待推进与待验证
-- **本地全链路闭环计划（已追加至详细开发计划附录）**：依次推进 `STEP-PLAT-008`（可视化管理后台 + 批量审核 + D1–D7 规则页 + 企业/邀请码/审计 + 四角色越权矩阵 + 核销 `PLAT-007-P2-1` 与管理员直传审计）、`STEP-PLAT-009`（公开注册开关 + 本地 SVG 验证码防刷 + `init-admin` CLI）、`STEP-PLAT-010`（`Platform/client_sdk/` 示例 + `Platform/deploy/` 本地仿真反向代理与清理脚本 + Chrome/Edge 冒烟）。
-- 管理员直传审计、表单上传代理限流、Starlette 升级兼容由 `PLAT-006-P2-1` 跟踪；测试轮询 25 秒阈值由 `PLAT-007-P2-1` 跟踪。目标环境 PostgreSQL、HTTPS/可信代理、多进程限流、原件保留与孤立文件处置见 [延期项](../../CRDocs/DEFERRED.md)。
+- 当前实施 STEP-PLAT-009（公开注册开关、本地 SVG 验证码、`init-admin` CLI），独立审核后进入 STEP-PLAT-010（客户端 SDK、仿真部署与 Chrome/Edge 冒烟）。
+- 表单上传代理限流和 Starlette 升级兼容由 `PLAT-006-P2-1` 跟踪。目标环境 PostgreSQL、HTTPS/可信代理、多进程限流、原件保留和孤立文件处置见 [延期项](../../CRDocs/DEFERRED.md)。
 - 客户 20–50 件真实 `.stp` 的协议/PMI/材料/闭合性分布，以及单件 OCCT 与单次 `igl` ICP 实测耗时（不可由本地闭环替代）；
 - 唯一首期部署目标（Linux Docker / Windows Server）、单方缺失默认策略、审核角色粒度、注册防刷门槛、规则作用域、预登记正例集（20–30 组）及找回率/P95 门槛。
 

@@ -1,5 +1,9 @@
 // 工作台的同源 API 客户端。仅在请求头传递内存中的 Bearer 令牌。
 const root = "/api/v1";
+const int64Fields = new Set([
+  "id", "actor_id", "enterprise_id", "existing_model_id", "invite_id", "job_id",
+  "model_id", "rule_id", "storage_quota_mb", "target_id", "uploader_id",
+]);
 const failures = {
   AUTH_REQUIRED: "请先登录。",
   INVALID_STEP_FILE: "无法解析此 STEP 文件。请确认文件可正常打开后重试。",
@@ -19,12 +23,12 @@ const failures = {
 };
 
 function readBody(response) {
-  // PostgreSQL ID 是 int64。保留 JSON 中的十进制原文，禁止舍入后误读另一任务。
+  // 保留 PostgreSQL int64 的十进制原文，避免编号和容量发生舍入。
   return response.text().then((body) => JSON.parse(body, (key, value, context) => {
-    if (key !== "job_id" && key !== "model_id") return value;
+    if (!int64Fields.has(key)) return value;
     if (typeof value === "number") {
       if (context?.source) return context.source;
-      if (!Number.isSafeInteger(value)) throw new Error("当前浏览器无法准确读取任务编号。");
+      if (!Number.isSafeInteger(value)) throw new Error("当前浏览器无法准确读取记录编号。");
       return String(value);
     }
     return value;
@@ -59,6 +63,17 @@ async function request(path, token, options) {
 
 function json(body) {
   return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+}
+
+/** 访问台账或管理接口。查询为公开筛选条件，凭证仅经请求头或 JSON 请求体传递。 */
+export async function platformRequest(path, token, { query, data, body, method, signal } = {}) {
+  const params = new URLSearchParams(Object.entries(query ?? {}).filter(([, value]) => value != null && value !== ""));
+  const suffix = params.size ? "?" + params : "";
+  return readBody(await request(path + suffix, token, {
+    ...(data === undefined ? { body } : json(data)),
+    method: method ?? (data === undefined ? "GET" : "POST"),
+    signal,
+  }));
 }
 
 function compareResponse(response) {

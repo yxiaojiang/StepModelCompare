@@ -1,5 +1,6 @@
 """实现企业批量上传、同企去重和人工审核流转。依赖 PostgreSQL 行锁与独立原件存储卷。"""
 
+import logging
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from app.geometry_engine.step_input import StepError, validate_step_file
 from app.uploads import UploadError, save_step
 
 _LIVE = ("PENDING", "INDEXING", "APPROVED")
+_LOG = logging.getLogger("step_platform")
 
 
 def upload_scope(actor, requested: int | None, *, direct: bool) -> int:
@@ -79,9 +81,15 @@ def review_model(engine, vault: Path | None, actor, model_id: int, *, approve: b
             actor_id=actor.user_id, action="MODEL_APPROVED_FOR_INDEXING" if approve else "MODEL_REJECTED",
             target_type="model", target_id=model_id, detail_json={},
         ))
+    result = {"model_id": model_id, "status": status}
     if not approve and vault is not None:
-        discard_model_source(vault, row.storage_path, row.enterprise_id)
-    return {"model_id": model_id, "status": status}
+        try:
+            discard_model_source(vault, row.storage_path, row.enterprise_id)
+        except (OSError, ValueError):
+            # 状态和审计已经提交，清理失败须单独提示，避免客户端误认为审核可重试。
+            _LOG.warning("驳回模型 %s 后未能清理原件", model_id)
+            result["warning_code"] = "MODEL_SOURCE_CLEANUP_FAILED"
+    return result
 
 
 def discard_model_source(vault: Path, key: str, enterprise_id: int) -> None:
@@ -124,6 +132,11 @@ def _admit(engine, actor, enterprise_id, step, direct):
             md5=step.digest, file_size_bytes=step.size, storage_path=step.key, uploader_id=actor.user_id, status=status,
             reviewer_id=actor.user_id if direct else None, reviewed_at=func.now() if direct else None,
         ).returning(Model.id)).scalar_one()
+        if direct:
+            connection.execute(AuditLog.__table__.insert().values(
+                actor_id=actor.user_id, action="MODEL_DIRECT_UPLOADED",
+                target_type="model", target_id=model_id, detail_json={},
+            ))
         data = {"model_id": model_id, "model_name": Path(step.filename).stem, "md5": step.digest, "status": status}
         if previous is not None:
             data.update(previous_status=previous.status, previous_reason=previous.reject_or_error_reason)

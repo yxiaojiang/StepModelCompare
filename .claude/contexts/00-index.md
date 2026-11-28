@@ -24,6 +24,6 @@
 | 05-blind-test-and-acceptance.md | （STEP-SIM-002）正反例标注、盲测、风险上界、建议率和人工复核负担 | 未启动；不作为 STEP-SIM-004 前置阻塞 |
 | 06-pilot-and-platform.md | （STEP-SIM-002）离线原型、基础试点、平台增量投入和扩展条件 | 已由 STEP-SIM-004 正式平台取代 |
 | [07-customer-demo.md](07-customer-demo.md) | 客户 Demo 的范围、对齐、评分、中文安装版与彩排 | 冻结于标签 `demo-v0.3.1`。用户已确认 `Data/test` 安装成功。比对进度 500 已修，17:24 修复包已生成；用户尚未确认新包比对通过，Studio 实机视觉未复核 |
-| [08-similarity-platform.md](08-similarity-platform.md) | 正式多企业 STEP 相似度对比与检索平台（目录 `Platform/`） | [STEP-PLAT-007](../../CRDocs/archive/2026-11-28_STEP-PLAT-007_React三维对比工作台/INDEX.md) React 三维对比工作台已独立通过并归档。建议先接通模型台账与人工审核 |
+| [08-similarity-platform.md](08-similarity-platform.md) | 正式多企业 STEP 相似度对比与检索平台（目录 `Platform/`） | [STEP-PLAT-008](../../CRDocs/archive/2026-11-28_STEP-PLAT-008_可视化管理后台/INDEX.md) 可视化管理后台已独立审核通过并归档。当前进入 STEP-PLAT-009 公开注册与管理员初始化。 |
 
 具体模块工作开始后再创建对应文件，避免空白占位文档。模块划分、文件名可随实际交付调整，并同步更新本索引。

@@ -1,7 +1,10 @@
 // 协调登录、上传、任务轮询、查看结果与选中回传。令牌和结果只保留在当前页面内存中。
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import { Administration, BindEnterprise } from "./Administration.jsx";
 import { login, pollJob, selectModel, uploadStep } from "./api.js";
+import { ModelLedger } from "./ModelLedger.jsx";
+import { navigationFor } from "./platform-forms.js";
 import { Breakdown, Modal, Results } from "./results.jsx";
 import { Viewer } from "./Viewer.jsx";
 
@@ -97,6 +100,7 @@ function Upload({ file, run, signedIn, busy, onFile, onSubmit, onResume }) {
 /** 挂载可登录并执行 STEP 检索的工作台。后台 API 通过同源 /api 访问。 */
 export function Workbench() {
   const [session, setSession] = useState(null);
+  const [view, setView] = useState("workbench");
   const [signingIn, setSigningIn] = useState(false);
   const [notice, setNotice] = useState("");
   const [file, setFile] = useState(null);
@@ -108,11 +112,14 @@ export function Workbench() {
   const activity = useRef(null);
   const busy = ["uploading", "QUEUED", "RUNNING"].includes(run.phase);
   const result = run.phase === "DONE" ? run.result : null;
+  const navigation = navigationFor(session?.role);
+  const currentView = navigation.some((item) => item.id === view) ? view : "workbench";
 
   const signOut = useCallback((message) => {
     activity.current?.abort();
     activity.current = null;
     setSession(null);
+    setView("workbench");
     setFile(null);
     setRun(idle);
     setActive(null);
@@ -122,6 +129,7 @@ export function Workbench() {
     setNotice(message);
   }, []);
   const expire = useCallback(() => signOut("登录已失效，请重新登录。"), [signOut]);
+  const platformProps = { token: session?.access_token, onExpired: expire };
 
   useEffect(() => () => activity.current?.abort(), []);
   useEffect(() => {
@@ -197,8 +205,15 @@ export function Workbench() {
     <header className="topbar">
       <div className="topbar-inner">
         <div className="brand"><div className="brand-mark" aria-hidden="true"><i /><i /><i /></div>
-          <h1>STEP 模型对比工作台</h1>
+          <h1>STEP 模型相似度平台</h1>
         </div>
+        <nav className="platform-nav" aria-label="主导航">
+          {navigation.map((item) => <button key={item.id} type="button"
+            aria-current={currentView === item.id ? "page" : undefined} onClick={() => {
+              setDetails(null);
+              setView(item.id);
+            }}>{item.label}</button>)}
+        </nav>
         <div className="session-actions">
           {session && <span className="role">{roles[session.role] ?? "已登录"}</span>}
           <button type="button" className="header-button"
@@ -206,10 +221,11 @@ export function Workbench() {
         </div>
       </div>
     </header>
-    <div className="boundary"><div className="boundary-inner"><strong>工程边界</strong><span>{boundary}</span></div></div>
+    {currentView === "workbench" &&
+      <div className="boundary"><div className="boundary-inner"><strong>工程边界</strong><span>{boundary}</span></div></div>}
     <main className="page">
       {notice && <p className="session-notice" role="status">{notice}</p>}
-      <div className="layout">
+      <div className="layout" hidden={currentView !== "workbench"}>
         <aside className="sidebar" aria-label="查询和结果">
           <Upload file={file} run={run} busy={busy} signedIn={Boolean(session)} onFile={setFile} onSubmit={begin}
             onResume={() => void compare(run.job, run.filename)} />
@@ -219,6 +235,10 @@ export function Workbench() {
         <Viewer token={session?.access_token} job={result?.job_id}
           fileName={run.filename} candidate={active} onExpired={expire} />
       </div>
+      {currentView === "ledger" && <ModelLedger {...platformProps} />}
+      {currentView === "admin" && <Administration {...platformProps} />}
+      {currentView === "bind" && <BindEnterprise {...platformProps}
+        onBound={() => signOut("企业已绑定，请重新登录以启用企业权限。")} />}
     </main>
     {signingIn && <SignIn onClose={() => setSigningIn(false)} onSession={(data) => {
       setSession(data);

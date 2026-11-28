@@ -14,7 +14,7 @@
   - 版本化特征：`model_features(model_id, feature_version, ...)` + `active_feature_version` 全局指针，升级全库就绪并增量补齐后再原子切换；首期不跨企业共享底层几何缓存。
 - **前端选型**：用户于 2026-11-28 确定使用 React，三维查看器采用本地打包的 Three.js。
 - **Git 现状**：当前在 `feat/platform-v1` 分支，`Demo/` 与标签 `demo-v0.3.1` 冻结保留。
-- **代码交接**：阶段 2 里程碑为 `ecc9474`，阶段 3 服务端最近里程碑为 `bcde2b0`。`STEP-PLAT-007` 的 React 三维对比、任务 GLB 和 Windows 回归已独立审核通过并归档。见 [STEP-PLAT-007 归档](../CRDocs/archive/2026-11-28_STEP-PLAT-007_React三维对比工作台/INDEX.md) · [活动审核状态](../CRDocs/STATUS.md) · [有效延期项](../CRDocs/DEFERRED.md)。
+- **代码交接**：STEP-PLAT-008 可视化管理后台已独立审核通过并归档。本机 PostgreSQL 18.7 后端 69/69、前端 6/6，执行者已完成本地浏览器冒烟。见 [审核归档](../CRDocs/archive/2026-11-28_STEP-PLAT-008_可视化管理后台/INDEX.md) · [活动审核状态](../CRDocs/STATUS.md) · [有效延期项](../CRDocs/DEFERRED.md)。
 
 ## 未决前提（阶段 1 签认冻结）
 - 客户 20–50 件真实 `.stp` 样本盘点（协议、语义 PMI 可读率、材料填写率、闭合/开壳/多实体占比、单件 OCCT 与单次 `igl` ICP 耗时）。
@@ -28,4 +28,4 @@
 - [决定记录](../PlanDocs/DECISIONS.md) · [STEP-SIM-005 归档](../PlanDocs/STEP-SIM-005/STATUS.md) · [STEP-SIM-004 归档](../PlanDocs/STEP-SIM-004/STATUS.md)
 
 ## 下一步
-按 [详细开发计划](../Docs/STEP模型相似度对比与检索系统详细开发计划.md) 附录先在本地跑通剩余三切片闭环：优先启动 `STEP-PLAT-008`（可视化管理后台、批量审核、D1–D7 规则页、企业/邀请码/审计与四角色越权矩阵），随后依次完成 `STEP-PLAT-009`（公开注册与 `init-admin` CLI）和 `STEP-PLAT-010`（客户端 SDK 与本地仿真部署包）。客户真实样本与目标服务器/GPU 验收继续作为现场校准门禁。
+按 [详细开发计划](../Docs/STEP模型相似度对比与检索系统详细开发计划.md) 实施 STEP-PLAT-009（公开注册开关、本地 SVG 验证码与 `init-admin` CLI），独立审核后进入 STEP-PLAT-010（客户端 SDK 与本地仿真部署包）。客户样本及目标环境契约并行待签认。

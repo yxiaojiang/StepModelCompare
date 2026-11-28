@@ -7,7 +7,7 @@ from base64 import b64decode
 from binascii import Error as Base64Error
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path as RoutePath, Query, Request
 from fastapi.responses import FileResponse
@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.auth.cache import AuthCacheValue
 from app.auth.service import AuthenticationError, AuthenticationRateLimited
 from app.db.model_features import active_feature_version, vault_path
-from app.db.models import Enterprise, FeatureCatalog, InviteCode, Model, ModelFeature
+from app.db.models import AuditLog, Enterprise, FeatureCatalog, InviteCode, Model, ModelFeature, User
 from app.enterprise import EnterpriseError, EnterpriseService
 from app.repository.visibility import VisibilityError, visible_glb_query, visible_model_query
 from app.workflow_api import install_workflow_routes
@@ -26,6 +26,9 @@ _BIGINT = 2**63 - 1
 AfterId = Annotated[int, Query(ge=0, le=_BIGINT)]
 OptionalQueryId = Annotated[int | None, Query(gt=0, le=_BIGINT)]
 PathId = Annotated[int, RoutePath(gt=0, le=_BIGINT)]
+ModelStatus = Literal["PENDING", "INDEXING", "APPROVED", "PARSE_FAILED", "REJECTED"]
+ModelName = Annotated[str | None, Query(max_length=255)]
+ModelMd5 = Annotated[str | None, Query(pattern=r"^[a-fA-F0-9]{32}$")]
 
 
 class TokenRequest(BaseModel):
@@ -140,6 +143,8 @@ def build_api_router() -> APIRouter:
     @router.post("/auth/bind-invite")
     def bind_invite(request: Request, body: BindInviteRequest, actor: AuthCacheValue = Depends(current_user)) -> dict:
         """核销邀请码并绑定当前试用用户的企业归属。"""
+        if actor.role != "TRIAL_USER":
+            raise HTTPException(403, "仅试用账号可绑定邀请码")
         if not request.app.state.invite_limiter.allow(f"ip:{_client_ip(request)}", f"uid:{actor.user_id}"):
             raise HTTPException(429, "邀请码尝试过于频繁")
         try:
@@ -153,7 +158,9 @@ def build_api_router() -> APIRouter:
     @router.get("/admin/enterprises", dependencies=[Depends(require_admin)])
     def list_enterprises(request: Request, after_id: AfterId = 0) -> list[dict]:
         """分页列出企业摘要；仅系统管理员可访问，每次最多 100 条。"""
-        return _list_records(request, select(Enterprise.id, Enterprise.name, Enterprise.code, Enterprise.status)
+        return _list_records(request, select(
+            Enterprise.id, Enterprise.name, Enterprise.code, Enterprise.status, Enterprise.storage_quota_mb,
+        )
                              .where(Enterprise.id > after_id).order_by(Enterprise.id))
 
     @router.get("/admin/invite-codes", dependencies=[Depends(require_admin)])
@@ -168,6 +175,35 @@ def build_api_router() -> APIRouter:
     def revoke_invite(request: Request, invite_id: PathId, actor: AuthCacheValue = Depends(require_admin)) -> dict:
         """停用指定邀请码，返回本次是否改变状态；权限不足返回 403。"""
         return {"revoked": EnterpriseService(request.app.state.engine).revoke_invite(invite_id, actor.user_id)}
+
+    @router.get("/admin/models")
+    def admin_models(request: Request, status: ModelStatus | None = None,
+                     enterprise_id: OptionalQueryId = None, after_id: AfterId = 0,
+                     name: ModelName = None, md5: ModelMd5 = None, uploader_id: OptionalQueryId = None,
+                     actor: AuthCacheValue = Depends(require_admin)) -> list[dict]:
+        """按状态、企业、名称、MD5、上传人及游标筛选全库台账，每页最多 100 条；非管理员返回 403。"""
+        query = visible_model_query(actor, target_enterprise_id=enterprise_id)
+        return _ledger_page(request, query, status, after_id, name, md5, uploader_id)
+
+    @router.get("/enterprise/models")
+    def enterprise_models(request: Request, status: ModelStatus | None = None, after_id: AfterId = 0,
+                          name: ModelName = None, md5: ModelMd5 = None, uploader_id: OptionalQueryId = None,
+                          actor: AuthCacheValue = Depends(current_user)) -> list[dict]:
+        """按状态、名称、MD5、上传人及游标筛选本企业台账，每页最多 100 条；无企业身份返回 403。"""
+        if actor.role not in ("ENT_ADMIN", "ENT_USER") or actor.enterprise_id is None:
+            raise HTTPException(403, "需要企业账号")
+        # 台账需可追踪待审与失败，单独按可信身份限定企业，不能把这条查询用于检索和预览。
+        query = select(Model).where(Model.enterprise_id == actor.enterprise_id)
+        return _ledger_page(request, query, status, after_id, name, md5, uploader_id)
+
+    @router.get("/admin/audit-logs", dependencies=[Depends(require_admin)])
+    def audit_logs(request: Request, after_id: AfterId = 0) -> list[dict]:
+        """按事件 ID 游标分页列出审计元数据，每页最多 100 条；非管理员返回 403，游标无效返回 422。"""
+        # 审计详情可包含历史自由文本，读取端仅投影结构化事件元数据。
+        return _list_records(request, select(
+            AuditLog.id, AuditLog.actor_id, AuditLog.action, AuditLog.target_type, AuditLog.target_id,
+            AuditLog.created_at,
+        ).where(AuditLog.id > after_id).order_by(AuditLog.id))
 
     @router.get("/models")
     def list_models(request: Request, enterprise_id: OptionalQueryId = None, after_id: AfterId = 0,
@@ -193,20 +229,10 @@ def build_api_router() -> APIRouter:
     @router.get("/models/{model_id}")
     def model_detail(request: Request, model_id: PathId, actor: AuthCacheValue = Depends(current_user)) -> dict:
         """返回单个可见模型摘要；无权限或不存在返回 404。"""
-        feature = select(ModelFeature.feature_payload).where(
-            ModelFeature.model_id == Model.id, ModelFeature.status == "READY",
-            ModelFeature.feature_version == select(FeatureCatalog.active_feature_version).where(
-                FeatureCatalog.id == 1,
-            ).scalar_subquery(),
-        ).scalar_subquery()
-        rows = _list_records(request, _model_summary(actor, model_id=model_id).add_columns(feature.label("feature_payload")))
+        rows = _read_feature_rows(request, _model_summary(actor, model_id=model_id).add_columns(_active_feature()))
         if not rows:
             raise HTTPException(404, "模型不存在")
-        row = rows[0]
-        if isinstance(row["feature_payload"], dict):
-            # 缓存键只供受控 GLB 路由读取，台账只提供特征值。
-            row["feature_payload"].pop("cache_refs", None)
-        return row
+        return rows[0]
 
     @router.get("/models/{model_id}/glb", response_class=FileResponse)
     def model_glb(request: Request, model_id: PathId, actor: AuthCacheValue = Depends(current_user)) -> FileResponse:
@@ -234,6 +260,40 @@ def _client_ip(request):
 def _list_records(request, statement):
     with request.app.state.engine.connect() as connection:
         return [dict(row) for row in connection.execute(statement.limit(100)).mappings()]
+
+
+def _active_feature():
+    version = select(FeatureCatalog.active_feature_version).where(FeatureCatalog.id == 1).scalar_subquery()
+    return select(ModelFeature.feature_payload).where(
+        ModelFeature.model_id == Model.id, ModelFeature.status == "READY", ModelFeature.feature_version == version,
+    ).scalar_subquery().label("feature_payload")
+
+
+def _read_feature_rows(request, statement):
+    rows = _list_records(request, statement)
+    for row in rows:
+        if isinstance(row["feature_payload"], dict):
+            # 缓存键只供受控 GLB 路由读取，台账只提供特征值。
+            row["feature_payload"].pop("cache_refs", None)
+    return rows
+
+
+def _ledger_page(request, query, status, after_id, name, md5, uploader_id):
+    query = query.where(Model.id > after_id)
+    if status is not None:
+        query = query.where(Model.status == status)
+    if name:
+        query = query.where(Model.model_name.icontains(name, autoescape=True))
+    if md5:
+        query = query.where(Model.md5 == md5.lower())
+    if uploader_id is not None:
+        query = query.where(Model.uploader_id == uploader_id)
+    statement = query.with_only_columns(
+        Model.id, Model.enterprise_id, Model.model_name, Model.status, Model.md5,
+        Model.uploader_id, User.username.label("uploader_name"), Model.uploaded_at, Model.approved_at,
+        Model.selected_count, Model.reject_or_error_reason, Model.is_public_demo, _active_feature(),
+    ).join(User, User.id == Model.uploader_id).order_by(Model.id)
+    return _read_feature_rows(request, statement)
 
 
 def _model_summary(actor, *, model_id=None, enterprise_id=None):
