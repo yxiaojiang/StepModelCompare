@@ -63,7 +63,9 @@ Demo/              已冻结的旧版演示目录，不属于本平台开发目�
 - 至少一个状态为 `ACTIVE` 的企业及对应企业账号，或一个已经绑定企业的邀请码。
 - 一条已经激活的全局相似度规则。
 
-如果只拿到普通账号而没有企业或规则，上传可能返回 `FORBIDDEN`、`ENTERPRISE_NOT_AVAILABLE` 或 `RULE_UNAVAILABLE`，这不是浏览器操作错误。
+如果只拿到普通账号而没有企业或规则，上传或对比可能返回 `FORBIDDEN`、`ENTERPRISE_NOT_AVAILABLE` 或 `RULE_NOT_CONFIGURED`，这不是浏览器操作错误。
+
+> **本地测试快速建号提示（仅限开发环境）**：开发或测试人员可在 `Platform/backend` 目录、配置好 `STEP_PLATFORM_DATABASE_URL` 并完成迁移后，通过 Python 调用 `app.auth.service.AuthService(engine, pepper)` 的 `register(...)` 和 `set_role_or_enterprise(..., role="SYS_ADMIN", enterprise_id=None)` 创建首个系统管理员账号，随后再用管理员接口创建企业、邀请码和全局规则。
 
 ## 四、项目配置
 
@@ -75,33 +77,36 @@ $env:STEP_PLATFORM_MODEL_VAULT = "D:\StepPlatformData\vault"
 $env:STEP_PLATFORM_AUTH_PEPPER = "请生成至少32字节的独立随机字符串"
 $env:STEP_PLATFORM_JWT_SECRET = "请生成至少32字节的另一条独立随机字符串"
 $env:STEP_PLATFORM_RUN_QUEUE_WORKERS = "true"
+$env:OPENBLAS_NUM_THREADS = "1"
 ```
 
 ### 4.1 常用配置项
 
 | 配置项 | 必需 | 默认值 | 用途 |
 | --- | --- | ---: | --- |
-| `STEP_PLATFORM_DATABASE_URL` | 是 | 本地默认地址 | PostgreSQL 连接地址 |
-| `STEP_PLATFORM_MODEL_VAULT` | 是 | 无 | STEP 原件和 GLB 预览的存储根目录 |
-| `STEP_PLATFORM_AUTH_PEPPER` | 是 | 无 | 登录成功缓存的服务端密钥，至少 32 字节 |
-| `STEP_PLATFORM_JWT_SECRET` | 是 | 无 | JWT 签名密钥，必须与 pepper 不同且至少 32 字节 |
+| `STEP_PLATFORM_DATABASE_URL` | 是 | `postgresql+psycopg://localhost/step_platform` | PostgreSQL 连接地址 |
+| `STEP_PLATFORM_MODEL_VAULT` | 是 | 无 | STEP 原件和 GLB 预览的存储根目录（未配置时上传和预览返回 `503 STORAGE_UNAVAILABLE`） |
+| `STEP_PLATFORM_AUTH_PEPPER` | 启用鉴权时必需 | 无 | 登录成功缓存的服务端密钥，至少 32 字节（两把密钥均未配时仅 `/health` 可用，鉴权接口返 `503`） |
+| `STEP_PLATFORM_JWT_SECRET` | 启用鉴权时必需 | 无 | JWT 签名密钥，必须与 pepper 不同且至少 32 字节 |
 | `STEP_PLATFORM_RUN_QUEUE_WORKERS` | 否 | `true` | 是否在当前后端进程启动队列和索引消费者 |
 | `STEP_PLATFORM_DEFAULT_TOP_N` | 否 | `5` | 默认返回的候选数量 |
 | `STEP_PLATFORM_MAX_TOP_N` | 否 | `50` | 单次对比允许的最大候选数量 |
-| `STEP_PLATFORM_MAX_FILE_SIZE_BYTES` | 否 | 由解析限制决定 | 单个 STEP 文件上限 |
+| `STEP_PLATFORM_MAX_FILE_SIZE_BYTES` | 否 | `50000000`（50 MB） | 单个 STEP 文件上限 |
+| `STEP_PLATFORM_MAX_UPLOAD_REQUEST_BYTES` | 否 | `256000000`（256 MB） | 单次 multipart 上传请求总字节上限 |
 | `STEP_PLATFORM_MAX_BATCH_FILES` | 否 | `50` | 批量入库最多文件数 |
 | `STEP_PLATFORM_COMPARE_JOB_TIMEOUT` | 否 | `120` 秒 | 单个对比任务计算时限 |
 | `STEP_PLATFORM_QUEUE_WAIT_TIMEOUT` | 否 | `60` 秒 | 任务允许等待队列的时限 |
 | `STEP_PLATFORM_REAPER_TTL` | 否 | `211` 秒 | 试用预占回收时限，必须大于前两项之和再加 30 秒 |
 | `STEP_PLATFORM_SYNC_WAIT_TIMEOUT` | 否 | `25` 秒 | 同步/混合请求最多在 HTTP 内等待多久 |
 | `STEP_PLATFORM_OCCT_POOL_SIZE` | 否 | `2` | OCCT 解析子进程数 |
-| `STEP_PLATFORM_MAX_QUEUE_DEPTH` | 否 | `32` | 队列最大深度，满时返回 `QUEUE_FULL` |
+| `STEP_PLATFORM_MAX_QUEUE_DEPTH` | 否 | `32` | 队列最大深度，满时返回 `503 QUEUE_FULL` |
+| `STEP_PLATFORM_AUTH_RATE_LIMIT_MAX_ATTEMPTS` | 否 | `5` | 60 秒窗口内登录限流次数（同账号连续失败 5 次还会触发短暂锁定） |
 
 不要把密码、token、pepper 或 JWT secret 放进 URL、截图、日志或提交记录。系统会拒绝带敏感查询参数的 URL。
 
 ## 五、第一次启动
 
-以下命令以 PowerShell 为例。请在项目根目录 `D:\TEmp\StepModelCompare` 执行。
+以下命令以 PowerShell 为例，均从项目目录 `D:\TEmp\StepModelCompare` 出发。
 
 ### 5.1 安装后端依赖
 
@@ -115,7 +120,7 @@ py -3.13 -m venv .venv
 
 ### 5.2 创建数据库并执行迁移
 
-先在 PostgreSQL 中创建数据库和账号，再在后端目录执行：
+先在 PostgreSQL 中创建数据库和账号，在当前终端按“第四节”设置好 `$env:STEP_PLATFORM_DATABASE_URL`，再在 `Platform\backend` 目录执行：
 
 ```powershell
 $env:PYTHONPATH = (Get-Location).Path
@@ -188,9 +193,9 @@ npm run dev
 - **详情**：查看 D1–D7 的原始测量、有效权重、分项分数和缺失提醒。
 - **并排视图**：同时查看查询件和候选件，两个视口共享相机和缩放。
 - **叠加视图**：只有通过刚体、手性和对齐门禁的候选可以叠加。叠加使用右手系旋转和平移，不做缩放或镜像。
-- **记录选中**：选择候选后点击记录，成功后会显示“已记录选中”。同一候选重复点击不会重复累计。
+- **记录选中**：在候选列表点击某一候选行时，页面会切换三维预览并自动触发选中回传，成功后显示“已记录选中”。同一任务内重复点击同一候选不会重复累计。
 
-看到“部分数据未核实”“暂无可用分数”或“待复核”时，不要把它当成系统故障，应打开详情查看缺失原因。
+看到“部分数据未核实”“无可用分数”或“待复核”时，不要把它当成系统故障，应打开详情查看缺失原因。
 
 ### 6.4 结束操作
 
@@ -198,37 +203,38 @@ npm run dev
 
 ## 七、管理员和接口测试
 
-当前还没有完整的管理后台页面，管理员操作通过 API 或 FastAPI Swagger 完成。启动后打开：
+当前还没有完整的管理后台页面，管理员操作通过 HTTP 接口完成。启动后端后可打开 OpenAPI 文档查看全部路径和请求体字段：
 
 ```text
 http://127.0.0.1:8000/docs
 ```
 
-先调用 `POST /api/v1/auth/token` 登录，复制返回的 `access_token`，在 Swagger 的 **Authorize** 中输入：
+> **注意**：当前后端直接在路由依赖中解析 `Authorization` 请求头，未在 OpenAPI 中注册全局 `Authorize` 按钮。因此请先调用 `POST /api/v1/auth/token` 登录并复制 `access_token`，再使用 `curl`、PowerShell `Invoke-RestMethod` 或 Postman/Apifox 在请求头中传入：
 
 ```text
-Bearer <access_token>
+Authorization: Bearer <access_token>
 ```
+
+（表单上传和客户端对比接口也支持使用 Basic Auth 或在 multipart 表单字段中提交 `username`/`password`。）
 
 常用接口如下：
 
 | 目的 | 方法和路径 | 权限 |
 | --- | --- | --- |
-| 登录 | `POST /api/v1/auth/token` | 无 |
-| 创建企业 | `POST /api/v1/admin/enterprises` | `SYS_ADMIN` |
-| 创建邀请码 | `POST /api/v1/admin/invite-codes` | `SYS_ADMIN` |
+| 登录换令牌 | `POST /api/v1/auth/token`（别名 `/api/v1/auth/login`） | 无 |
+| 创建企业 / 企业列表 | `POST / GET /api/v1/admin/enterprises` | `SYS_ADMIN` |
+| 创建 / 查看 / 停用邀请码 | `POST / GET /api/v1/admin/invite-codes`、`DELETE /api/v1/admin/invite-codes/{invite_id}` | `SYS_ADMIN` |
 | 绑定邀请码 | `POST /api/v1/auth/bind-invite` | 已登录试用用户 |
-| 查看模型 | `GET /api/v1/models` | 已登录 |
+| 查看模型列表 / 详情 / 预览 | `GET /api/v1/models`、`GET /api/v1/models/{model_id}`、`GET /api/v1/models/{model_id}/glb` | 已登录（按企业/公开隔离） |
 | 查看待审模型 | `GET /api/v1/admin/models/pending` | `SYS_ADMIN` |
-| 批量上传待审模型 | `POST /api/v1/client/models/batch-upload` | 企业账号 |
-| 管理员直传 | `POST /api/v1/models/batch-upload` | `SYS_ADMIN` |
-| 通过模型 | `POST /api/v1/admin/models/{model_id}/approve` | `SYS_ADMIN` |
-| 驳回模型 | `POST /api/v1/admin/models/{model_id}/reject` | `SYS_ADMIN` |
+| 批量上传待审模型 | `POST /api/v1/client/models/batch-upload` | 企业账号（或 `SYS_ADMIN` 指定 `enterprise_id`） |
+| 管理员直传（直接进 `INDEXING`） | `POST /api/v1/models/batch-upload` | `SYS_ADMIN`（须指定 `enterprise_id`） |
+| 通过 / 驳回待审模型 | `POST /api/v1/admin/models/{model_id}/approve`、`/reject` | `SYS_ADMIN` |
 | 查看生效规则 | `GET /api/v1/rules/active` | 已登录 |
-| 创建规则 | `POST /api/v1/admin/rules` | `SYS_ADMIN` |
-| 激活规则 | `POST /api/v1/admin/rules/{rule_id}/activate` | `SYS_ADMIN` |
-| 网页对比 | `POST /api/v1/compare/upload` | 已登录 |
-| 网页轮询 | `GET /api/v1/compare/jobs/{job_id}` | 任务所属账号 |
+| 规则列表 / 创建 / 激活 | `GET / POST /api/v1/admin/rules`、`POST /api/v1/admin/rules/{rule_id}/activate` | `SYS_ADMIN` |
+| 网页对比 / 轮询 / 选中 | `POST /api/v1/compare/upload`、`GET /api/v1/compare/jobs/{job_id}`、`POST .../select` | 已登录 / 任务所属账号 |
+| 网页任务查询件 / 候选件 GLB | `GET /api/v1/compare/jobs/{job_id}/query/glb`、`GET .../models/{model_id}/glb` | 已完成 Web 任务所属账号 |
+| 客户端对比 / 轮询 / 选中 | `POST /api/v1/client/compare`、`GET /api/v1/client/compare/{job_id}`、`POST .../select` | 已登录 / 任务所属账号 |
 
 规则请求体字段较多，第一次使用建议在 Swagger 中展开 `ComparisonRule` 查看当前版本的完整字段，不要根据旧文档手写不完整 JSON。
 
@@ -252,7 +258,7 @@ Bearer <access_token>
 - [ ] 任务可以从 `QUEUED` 或 `RUNNING` 进入 `DONE`。
 - [ ] 页面能显示候选或明确显示无候选。
 - [ ] 详情、并排视图和叠加门禁提示可用。
-- [ ] 记录选中后刷新当前结果不会重复累计。
+- [ ] 同一任务内重复点击同一候选，不会重复累计选中次数。
 - [ ] 退出登录后不能继续读取旧任务。
 
 ### 8.2 业务边界测试
@@ -280,9 +286,9 @@ Bearer <access_token>
 | `/health` 返回 503 | PostgreSQL 不可达或未迁移 | 检查数据库连接和 `alembic upgrade head` |
 | 上传返回 `STORAGE_UNAVAILABLE` | 未配置模型存储或不是 PostgreSQL | 设置 `STEP_PLATFORM_MODEL_VAULT`，使用 PostgreSQL |
 | 上传返回 `FORBIDDEN` | 当前角色没有企业上传权限 | 使用企业账号或让管理员绑定企业 |
-| 上传返回 `RULE_UNAVAILABLE` | 没有激活可用规则 | 由系统管理员创建并激活规则 |
+| 上传或对比返回 `RULE_NOT_CONFIGURED` | 没有激活可用规则（HTTP 503） | 由系统管理员创建并激活全局或对应企业规则 |
 | 任务长时间排队 | 队列没有消费者或队列已满 | 确认 `STEP_PLATFORM_RUN_QUEUE_WORKERS=true`，查看后端日志 |
-| 任务变成 `PARSE_FAILED` | STEP 损坏、格式不支持或模型超出解析限制 | 更换可读文件，记录错误码和文件规模 |
+| 对比失败返 422（`INVALID_STEP_FILE`）或模型入库变 `PARSE_FAILED` | STEP 损坏、格式不支持或模型超出解析限制 | 更换可读文件，记录错误码和文件规模（注意：对比任务状态为 `FAILED`，模型台账状态才是 `PARSE_FAILED`） |
 | 候选显示“待复核” | 对称、手性、缺项或门禁未通过 | 查看详情，不要强行当作可靠排名 |
 | 叠加按钮不可用 | 没有可靠刚体矩阵或候选预览不存在 | 先用并排视图，检查任务是否为本切片之后生成 |
 | 旧任务没有查询件预览 | STEP-PLAT-007 之前的任务没有回填查询 GLB | 重新提交该查询件 |
@@ -301,9 +307,12 @@ Bearer <access_token>
 以下命令用于开发人员复核，不是普通业务人员的日常操作：
 
 ```powershell
-# 后端
+# 后端（需设置测试 PostgreSQL 地址，否则 17 项真实 PostgreSQL 用例会被跳过）
 Set-Location D:\TEmp\StepModelCompare
 $env:PYTHONPATH = (Resolve-Path Platform\backend).Path
+$env:OPENBLAS_NUM_THREADS = "1"
+$env:STEP_PLATFORM_TEST_POSTGRES_URL = "postgresql+psycopg://postgres@127.0.0.1:5432/postgres"
+$env:STEP_PLATFORM_DATABASE_URL = $env:STEP_PLATFORM_TEST_POSTGRES_URL
 python -m compileall -q Platform/backend
 python -m unittest discover -s Platform/backend/tests
 
