@@ -36,6 +36,7 @@
 
 ## 入口文件
 - [当前代码审核状态](../../CRDocs/STATUS.md)
+- [STEP 平台操作帮助](../../Docs/STEP平台操作帮助.md)：面向测试人员的环境配置、启动顺序、工作台操作、管理员 API 与边界说明
 - [详细开发设计文档](../../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md)
 - [详细开发计划](../../Docs/STEP模型相似度对比与检索系统详细开发计划.md) · [当前待推进](../Plan.md)
 - [STEP-SIM-005 归档](../../PlanDocs/STEP-SIM-005/STATUS.md) · [STEP-SIM-004 归档](../../PlanDocs/STEP-SIM-004/STATUS.md)

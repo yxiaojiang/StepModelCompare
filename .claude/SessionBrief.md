@@ -23,6 +23,7 @@
 
 ## 最近交付索引
 - [当前待推进](Plan.md) · [详细开发计划](../Docs/STEP模型相似度对比与检索系统详细开发计划.md) · [详细开发设计文档](../Docs/STEP模型相似度对比与检索系统详细开发设计文档.md)
+- [STEP 平台操作帮助](../Docs/STEP平台操作帮助.md)：面向小白用户的本地配置、启动、功能模块和实际测试步骤；明确当前可进入受控测试但尚未达到客户生产验收
 - [多企业平台模块记忆](contexts/08-similarity-platform.md) · [Demo 模块记忆](contexts/07-customer-demo.md)
 - [决定记录](../PlanDocs/DECISIONS.md) · [STEP-SIM-005 归档](../PlanDocs/STEP-SIM-005/STATUS.md) · [STEP-SIM-004 归档](../PlanDocs/STEP-SIM-004/STATUS.md)
 
