@@ -39,21 +39,21 @@
 
 **目录**：`Platform/backend/app/geometry_engine/`、`Platform/backend/app/rules/`、`Platform/backend/app/compare/`
 
-- [ ] **2.1 工程脚手架、PostgreSQL `SKIP LOCKED` 队列与两层 Worker 进程池（5 人/天）**
+- [x] **2.1 工程脚手架、PostgreSQL `SKIP LOCKED` 队列与两层 Worker 进程池（5 人/天）**
   - 搭建 `Platform/backend/` FastAPI + PostgreSQL + SQLAlchemy + Alembic 骨架及基于 `FOR UPDATE SKIP LOCKED` 的任务队列（不引入 Redis/Celery）；
   - 实现 `worker_runner.py`：第一层常驻受控 OCCT 解析子进程池（文件头 `ISO-10303-21;` 校验、单件硬超时强杀、内存与最大面片数熔断、每 $N$ 任务主动轮换防 C++ 内存泄漏）+ 第二层对比任务 Worker（受 `compare_job_timeout` 硬超时管控）。
-- [ ] **2.2 `D1–D7` 全维度特征提取与 `model_features` 版本隔离持久化（10 人/天）**
+- [x] **2.2 `D1–D7` 全维度特征提取与 `model_features` 版本隔离持久化（10 人/天）**
   - `step_reader.py`：复用 `Demo/src/geometry.py`（`cadquery-ocp-novtk`）毫米统一，扩展单闭合实体/多闭合实体累加/开壳显式标记；
   - `features_d1_d4.py`：D1（名称词干 + XDE 属性/颜色/图层 + 材料 + B-Rep 参数）、D2（有效闭合体积）、D3（`XCAFDoc_DimTolTool` AP242 PMI 解析）、D4（总表面积 + `BRepAdaptor_Surface` 类型面积占比 + 共轴/共面逻辑合并有效面数）；
   - `features_d6_d7.py`：D6（主轴 OBB 尺寸与比例）、D7（内圆柱孔识别、孔数、孔径多重集、孔心距分布）；
   - 按 `model_features(model_id, feature_version, ...)` 版本隔离落库并导出 `.npz` 采样网格与 `.glb` 缓存，配合 `active_feature_version` 原子切换防升级混算。
-- [ ] **2.3 空间刚体对齐、进程内 `igl.AABB` 复用与安全门禁（13 人/天）**
+- [x] **2.3 空间刚体对齐、进程内 `igl.AABB` 复用与安全门禁（13 人/天）**
   - `alignment_d5.py`：基于 `numpy + scipy + libigl (igl)` 复用并工程化封装 24 初值右手系刚体配准、Trimmed ICP（点到面 + SVD 回退）；在对比任务 Worker 进程内一次性构建查询件 `igl.AABB` 树并顺序完成至多 $K$ 次候选精排与 $C_{\text{新}} T C_{\text{旧}}^{-1}$ 矩阵换算（不逐次起子进程）；
   - 安全门禁：确保去重容差严格紧于歧义阈值，右手系暴露镜像偏差，多合格姿态歧义自动标「待复核」。
-- [ ] **2.4 动态百分比打分器、缺项规则与有效权重上界剪枝（9 人/天）**
+- [x] **2.4 动态百分比打分器、缺项规则与有效权重上界剪枝（9 人/天）**
   - 实现 `D1–D7` 百分制子分、总和 `100%` 校验、双方缺失重分配/D3 转 D7 替代、单方缺失显式标记与三选一策略、$V(q,m)=\emptyset$ 防除零转「特征不足/待复核」；
   - 实现基于重分配有效权重 $W'_{\text{D5}}(q,m)$ 的上界剪枝 $U(q,m) = S_{\text{other}}(q,m) + W'_{\text{D5}}(q,m)$，精确区分 `exact_pruned` 与 `truncated_by_k` 诊断标记。
-- [ ] **阶段 2 放行条件**：修改任意权重免重解析生效；数学一致性（误差 `< 0.05`）、$V=\emptyset$ 兜底、有效权重上界无误剪单测及四类难例（面片分裂/无 PMI/同体异形/镜像对称）回归测试全部通过。
+- [x] **阶段 2 放行条件**：修改任意权重免重解析生效；数学一致性（误差 `< 0.05`）、$V=\emptyset$ 兜底、有效权重上界无误剪单测及四类难例（面片分裂/无 PMI/同体异形/镜像对称）回归测试全部通过（`STEP-PLAT-004` 于 2026-11-28 独立审核 `APPROVED`）。
 
 ---
 
