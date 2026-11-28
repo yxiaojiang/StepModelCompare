@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -11,6 +12,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.config import Settings
 from app.db.session import build_engine
 from app.http_security import RejectUrlCredentials, enable_log_redaction
+from app.api import build_api_router
+from app.auth.cache import AuthSuccessCache
+from app.auth.rate_limit import AuthRateLimiter
+from app.auth.service import AuthService
+from app.auth.tokens import TokenService
 
 _LOG = logging.getLogger("step_platform")
 
@@ -21,6 +27,8 @@ def create_app() -> FastAPI:
     application = FastAPI(title="STEP 模型相似度平台", lifespan=_lifespan)
     application.add_middleware(RejectUrlCredentials)
     application.add_api_route("/health", health, methods=["GET"])
+    application.include_router(build_api_router())
+    application.add_exception_handler(RequestValidationError, _invalid_request)
     return application
 
 
@@ -33,9 +41,26 @@ async def _lifespan(application: FastAPI):
     application.state.settings = settings
     application.state.engine = engine
     try:
+        application.state.auth_service = None
+        application.state.token_service = None
+        if settings.auth_pepper is not None and settings.jwt_secret is not None:
+            application.state.auth_service = AuthService(
+                engine, settings.auth_pepper.get_secret_value(),
+                cache=AuthSuccessCache(settings.auth_cache_capacity, settings.auth_cache_ttl),
+                limiter=AuthRateLimiter(
+                    settings.auth_rate_limit_max_attempts, settings.auth_rate_limit_window,
+                    capacity=settings.auth_rate_limit_capacity,
+                ),
+            )
+            application.state.token_service = TokenService(settings.jwt_secret.get_secret_value(), settings.jwt_ttl)
         yield
     finally:
         engine.dispose()
+
+
+async def _invalid_request(_request: Request, _error: RequestValidationError) -> JSONResponse:
+    # 验证错误的输入快照可能包含密码或邀请码，统一使用固定响应。
+    return JSONResponse({"error_code": "INVALID_REQUEST"}, 422)
 
 
 def health(request: Request) -> JSONResponse:

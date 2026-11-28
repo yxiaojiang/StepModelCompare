@@ -9,7 +9,7 @@
 
 ## 阶段 0：开工前置准备（分支切分与报价发客）
 
-- [x] **Git 分支整理**：`test1` 已快进合并至 `main`，标签 `demo-v0.3.1` 已打，已从 `main` 切出 `feat/platform-v1`（2026-11-27 核对：三分支同指向 `2f19d54`）。正式平台在 `Platform/` 目录开工，保持 `Demo/` 不受影响。
+- [x] ~~**Git 分支整理**：`test1` 已快进合并至 `main`，标签 `demo-v0.3.1` 已打，已从 `main` 切出 `feat/platform-v1`（2026-11-27 核对：三分支同指向 `2f19d54`）。正式平台在 `Platform/` 目录开工，保持 `Demo/` 不受影响。~~
 - [ ] **报价单发客前复查**：在桌面版 Excel 打开 [STEP模型相似度对比与检索系统开发报价单.xlsx](STEP模型相似度对比与检索系统开发报价单.xlsx) 预览跨页打印版式并确认无误后发给客户。
 - [ ] **（并行遗留）Demo 0.3.1 修复包确认**：如客户仍需本地演示，关闭 Studio 后安装 17:24 修复包并用 `Data/test/SHOW-HOLE.step` 复核。
 
@@ -39,21 +39,23 @@
 
 **目录**：`Platform/backend/app/geometry_engine/`、`Platform/backend/app/rules/`、`Platform/backend/app/compare/`
 
-- [x] **2.1 工程脚手架、PostgreSQL `SKIP LOCKED` 队列与两层 Worker 进程池（5 人/天）**
-  - 搭建 `Platform/backend/` FastAPI + PostgreSQL + SQLAlchemy + Alembic 骨架及基于 `FOR UPDATE SKIP LOCKED` 的任务队列（不引入 Redis/Celery）；
-  - 实现 `worker_runner.py`：第一层常驻受控 OCCT 解析子进程池（文件头 `ISO-10303-21;` 校验、单件硬超时强杀、内存与最大面片数熔断、每 $N$ 任务主动轮换防 C++ 内存泄漏）+ 第二层对比任务 Worker（受 `compare_job_timeout` 硬超时管控）。
-- [x] **2.2 `D1–D7` 全维度特征提取与 `model_features` 版本隔离持久化（10 人/天）**
-  - `step_reader.py`：复用 `Demo/src/geometry.py`（`cadquery-ocp-novtk`）毫米统一，扩展单闭合实体/多闭合实体累加/开壳显式标记；
-  - `features_d1_d4.py`：D1（名称词干 + XDE 属性/颜色/图层 + 材料 + B-Rep 参数）、D2（有效闭合体积）、D3（`XCAFDoc_DimTolTool` AP242 PMI 解析）、D4（总表面积 + `BRepAdaptor_Surface` 类型面积占比 + 共轴/共面逻辑合并有效面数）；
-  - `features_d6_d7.py`：D6（主轴 OBB 尺寸与比例）、D7（内圆柱孔识别、孔数、孔径多重集、孔心距分布）；
-  - 按 `model_features(model_id, feature_version, ...)` 版本隔离落库并导出 `.npz` 采样网格与 `.glb` 缓存，配合 `active_feature_version` 原子切换防升级混算。
-- [x] **2.3 空间刚体对齐、进程内 `igl.AABB` 复用与安全门禁（13 人/天）**
-  - `alignment_d5.py`：基于 `numpy + scipy + libigl (igl)` 复用并工程化封装 24 初值右手系刚体配准、Trimmed ICP（点到面 + SVD 回退）；在对比任务 Worker 进程内一次性构建查询件 `igl.AABB` 树并顺序完成至多 $K$ 次候选精排与 $C_{\text{新}} T C_{\text{旧}}^{-1}$ 矩阵换算（不逐次起子进程）；
-  - 安全门禁：确保去重容差严格紧于歧义阈值，右手系暴露镜像偏差，多合格姿态歧义自动标「待复核」。
-- [x] **2.4 动态百分比打分器、缺项规则与有效权重上界剪枝（9 人/天）**
-  - 实现 `D1–D7` 百分制子分、总和 `100%` 校验、双方缺失重分配/D3 转 D7 替代、单方缺失显式标记与三选一策略、$V(q,m)=\emptyset$ 防除零转「特征不足/待复核」；
-  - 实现基于重分配有效权重 $W'_{\text{D5}}(q,m)$ 的上界剪枝 $U(q,m) = S_{\text{other}}(q,m) + W'_{\text{D5}}(q,m)$，精确区分 `exact_pruned` 与 `truncated_by_k` 诊断标记。
-- [x] **阶段 2 放行条件**：修改任意权重免重解析生效；数学一致性（误差 `< 0.05`）、$V=\emptyset$ 兜底、有效权重上界无误剪单测及四类难例（面片分裂/无 PMI/同体异形/镜像对称）回归测试全部通过（`STEP-PLAT-004` 于 2026-11-28 独立审核 `APPROVED`）。
+阶段 2 里程碑 `ecc9474` 已提交。独立审核与实测边界见 [STEP-PLAT-004 归档](../CRDocs/archive/2026-11-28_STEP-PLAT-004_D5精排与动态评分剪枝/INDEX.md)。
+
+- [x] ~~**2.1 工程脚手架、PostgreSQL `SKIP LOCKED` 队列与两层 Worker 进程池（5 人/天）**~~
+  - ~~搭建 `Platform/backend/` FastAPI + PostgreSQL + SQLAlchemy + Alembic 骨架及基于 `FOR UPDATE SKIP LOCKED` 的任务队列（不引入 Redis/Celery）；~~
+  - ~~实现 `worker_runner.py`：第一层常驻受控 OCCT 解析子进程池（文件头 `ISO-10303-21;` 校验、单件硬超时强杀、内存与最大面片数熔断、每 $N$ 任务主动轮换防 C++ 内存泄漏）+ 第二层对比任务 Worker（受 `compare_job_timeout` 硬超时管控）。~~
+- [x] ~~**2.2 `D1–D7` 全维度特征提取与 `model_features` 版本隔离持久化（10 人/天）**~~
+  - ~~`step_reader.py`：复用 `Demo/src/geometry.py`（`cadquery-ocp-novtk`）毫米统一，扩展单闭合实体/多闭合实体累加/开壳显式标记；~~
+  - ~~`features_d1_d4.py`：D1（名称词干 + XDE 属性/颜色/图层 + 材料 + B-Rep 参数）、D2（有效闭合体积）、D3（`XCAFDoc_DimTolTool` AP242 PMI 解析）、D4（总表面积 + `BRepAdaptor_Surface` 类型面积占比 + 共轴/共面逻辑合并有效面数）；~~
+  - ~~`features_d6_d7.py`：D6（主轴 OBB 尺寸与比例）、D7（内圆柱孔识别、孔数、孔径多重集、孔心距分布）；~~
+  - ~~按 `model_features(model_id, feature_version, ...)` 版本隔离落库并导出 `.npz` 采样网格与 `.glb` 缓存，配合 `active_feature_version` 原子切换防升级混算。~~
+- [x] ~~**2.3 空间刚体对齐、进程内 `igl.AABB` 复用与安全门禁（13 人/天）**~~
+  - ~~`alignment_d5.py`：基于 `numpy + scipy + libigl (igl)` 复用并工程化封装 24 初值右手系刚体配准、Trimmed ICP（点到面 + SVD 回退）；在对比任务 Worker 进程内一次性构建查询件 `igl.AABB` 树并顺序完成至多 $K$ 次候选精排与 $C_{\text{新}} T C_{\text{旧}}^{-1}$ 矩阵换算（不逐次起子进程）；~~
+  - ~~安全门禁：确保去重容差严格紧于歧义阈值，右手系暴露镜像偏差，多合格姿态歧义自动标「待复核」。~~
+- [x] ~~**2.4 动态百分比打分器、缺项规则与有效权重上界剪枝（9 人/天）**~~
+  - ~~实现 `D1–D7` 百分制子分、总和 `100%` 校验、双方缺失重分配/D3 转 D7 替代、单方缺失显式标记与三选一策略、$V(q,m)=\emptyset$ 防除零转「特征不足/待复核」；~~
+  - ~~实现基于重分配有效权重 $W'_{\text{D5}}(q,m)$ 的上界剪枝 $U(q,m) = S_{\text{other}}(q,m) + W'_{\text{D5}}(q,m)$，精确区分 `exact_pruned` 与 `truncated_by_k` 诊断标记。~~
+- [x] ~~**阶段 2 放行条件**：修改任意权重免重解析生效；数学一致性（误差 `< 0.05`）、$V=\emptyset$ 兜底、有效权重上界无误剪单测及四类难例（面片分裂/无 PMI/同体异形/镜像对称）回归测试全部通过（`STEP-PLAT-004` 于 2026-11-28 独立审核 `APPROVED`）。~~
 
 ---
 
@@ -62,10 +64,12 @@
 **目录**：`Platform/backend/app/db/`、`auth/`、`models_mgmt/` 及对应管理端页面
 
 - [ ] **3.1 账号认证、HMAC+`auth_version` 鉴权缓存与 5 次并发 CAS 预占限额（11 人/天）**
-  - 实现数据库表结构与 Alembic 迁移（`enterprises`, `invite_codes`, `users`[含 `auth_version`], `trial_reservations`, `models`, `model_features`, `similarity_rules`, `compare_jobs`, `compare_results`, `audit_logs`）；
-  - 实现注册（IP 限流 + 本地验证码 + 后台开关）、Argon2id 慢哈希、JWT 登录、Basic Auth `HMAC-SHA256(pepper, uid:auth_version:pwd)` 短时成功缓存（改密/禁用/锁定/改权递增 `auth_version` 即时失效，未命中加 IP+账号双限流）；
-  - 实现无邀请码 5 次限额短事务原子预占 + `WHERE status='RESERVED'` CAS 实扣（CAS 失败严禁写结果并标 `QUOTA_EXPIRED` 防白嫖）+ 损坏/超时 CAS 回滚 + 超时回收器（`reaper_ttl > 排队上限 + compare_job_timeout + 30s`）；
-  - 封装 Repository 层 `apply_visibility_scope` 跨企业强制隔离守卫（涵盖列表/详情/GLB/对比全路径）。
+  - ~~实现数据库表结构与 Alembic 迁移（`enterprises`, `invite_codes`, `users`[含 `auth_version`], `trial_reservations`, `models`, `model_features`, `similarity_rules`, `compare_jobs`, `compare_results`, `audit_logs`）~~
+  - ~~实现 Argon2id、JWT 登录、Basic Auth、HMAC 有界 LRU/TTL 成功缓存、`auth_version` 即时失效和 IP + 账号双限流~~（执行者自测完成，待独立审核）。
+  - ~~实现企业创建和查询、邀请码创建/查询/撤销及限次原子绑定~~（后端接口，待独立审核）。
+  - ~~实现试用任务原子入队和 5 次预占、结果 CAS 实扣、失败回滚及过期回收，接通已领取试用任务的精排与结算~~（后端事务在本机 PostgreSQL 通过自测，待独立审核）。
+  - ~~封装 Repository 层 `apply_visibility_scope`，用于列表、详情、GLB 和已领取试用任务的候选与结果发布~~（待独立审核）。
+  - 注册入口（IP 限流 + 本地验证码 + 后台开关）、企业对比入口及 Web/客户端上传、轮询、常驻调度接线随对应切片交付。
 - [ ] **3.2 模型台账管理、五态审核流与 MD5 幂等去重（13 人/天）**
   - 实现服务端批量上传与手动对比查询归档（查询件与模型库隔离，有界队列满额返回 `503`）；
   - 实现 `PENDING → INDEXING → APPROVED / PARSE_FAILED` 及 `REJECTED` 五态状态机与隔离暂存区管理；

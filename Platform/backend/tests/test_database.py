@@ -17,17 +17,27 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
 
+from app.compare.rule import ComparisonRule
+from app.compare.trial_job import run_trial_compare_job
 from app.config import Settings
 from app.db.model_features import (
     FeatureVersionConflict, active_feature_version, load_ready_features, missing_feature_models,
     switch_active_feature_version, vault_path,
 )
-from app.db.models import Base, CompareJob, Enterprise, FeatureCatalog, Model, ModelFeature, SimilarityRule, User
+from app.db.models import (
+    Base, CompareJob, CompareResult, Enterprise, FeatureCatalog, InviteCode, Model, ModelFeature,
+    SimilarityRule, TrialReservation, User,
+)
 from app.db.queue import claim_compare_job, claim_indexing_model
 from app.db.session import build_engine
 from app.geometry_engine.feature_indexing import build_model_features, rebuild_feature_version
 from app.geometry_engine.step_input import ParseLimits
 from app.geometry_engine.worker_runner import OcctPool
+from app.enterprise import EnterpriseError, EnterpriseService
+from app.repository.quota import (
+    QuotaError, commit_trial_results, enqueue_trial_compare, reap_expired_trial_quota, release_trial_quota,
+)
+from app.repository.visibility import VisibilityUser
 
 _ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 _POSTGRES_TEST_URL = os.environ.get("STEP_PLATFORM_TEST_POSTGRES_URL")
@@ -198,6 +208,105 @@ class PostgresTests(unittest.TestCase):
     def _drop_schema(self, server, schema):
         with server.begin() as conn:
             conn.exec_driver_sql(f"DROP SCHEMA {schema} CASCADE")
+
+    def test_trial_ten_concurrent_admissions_and_late_completion(self):
+        """十路 PostgreSQL 并发只能建五个试用任务，解析失败释放，回收与迟到结果竞争不写结果。"""
+        engine = self._engine
+        user, enterprise, _ = _seed_user(engine)
+        model = _seed_model(engine, user, enterprise)
+        with engine.begin() as connection:
+            connection.execute(update(User).where(User.id == user).values(
+                role="TRIAL_USER", is_trial=True, enterprise_id=None,
+            ))
+            connection.execute(update(Model).where(Model.id == model).values(
+                status="APPROVED", is_public_demo=True,
+            ))
+        actor = VisibilityUser(user, "TRIAL_USER", None, True)
+        settings = Settings()
+        rule = ComparisonRule(weights={f"D{index}": 100 if index == 5 else 0 for index in range(1, 8)})
+        snapshot = {"rule": rule.model_dump(mode="json"), "feature_version": "1.0.0"}
+        start = Barrier(10)
+
+        def admit(index):
+            start.wait(timeout=10)
+            try:
+                return enqueue_trial_compare(
+                    engine, settings, actor, source="WEB", query_filename=f"q{index}.step",
+                    query_md5=f"{index:032x}", rule_snapshot=snapshot, auth_version=1,
+                )
+            except QuotaError as error:
+                return str(error)
+
+        with ThreadPoolExecutor(max_workers=10) as workers:
+            outcomes = list(workers.map(admit, range(10)))
+        self.assertEqual(outcomes.count("TRIAL_QUOTA_EXCEEDED"), 5)
+        jobs = [job for job in outcomes if isinstance(job, int)]
+        self.assertEqual(len(set(jobs)), 5)
+        first = claim_compare_job(engine, settings.queue_wait_timeout)
+        self.assertIn(first, jobs)
+        with TemporaryDirectory() as directory, OcctPool(settings.parse_limits(), workers=1) as pool:
+            broken = Path(directory, "broken.step")
+            broken.write_bytes(b"invalid header")
+            self.assertFalse(run_trial_compare_job(settings, pool, engine, Path(directory), broken, first))
+        self.assertFalse(release_trial_quota(engine, first, "INVALID_STEP_FILE"))
+        second = claim_compare_job(engine, settings.queue_wait_timeout)
+        self.assertTrue(commit_trial_results(engine, second, [{"model_id": model, "breakdown_json": {}}]))
+        late = claim_compare_job(engine, settings.queue_wait_timeout)
+        expiry = datetime.now(timezone.utc) + timedelta(seconds=settings.reaper_ttl + 5)
+        race = Barrier(2)
+
+        def deliver():
+            race.wait(timeout=5)
+            return commit_trial_results(engine, late, [{"model_id": model, "breakdown_json": {}}], now=expiry)
+
+        def reap():
+            race.wait(timeout=5)
+            return reap_expired_trial_quota(engine, expiry)
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            late_result = workers.submit(deliver)
+            reaped = workers.submit(reap)
+            self.assertFalse(late_result.result(timeout=10))
+            self.assertIn(reaped.result(timeout=10), (2, 3))
+        with engine.connect() as connection:
+            self.assertEqual(connection.execute(select(CompareResult.job_id)).scalars().all(), [second])
+            self.assertEqual(connection.execute(select(CompareJob.error_code)
+                                                .where(CompareJob.id == first)).scalar_one(), "ERR_INVALID_STEP_HEADER")
+            self.assertEqual(connection.execute(select(CompareJob.status, CompareJob.error_code)
+                                                .where(CompareJob.id == late)).one(), ("FAILED", "QUOTA_EXPIRED"))
+            self.assertEqual(connection.execute(select(User.used_count, User.in_flight_count)
+                                                .where(User.id == user)).one(), (1, 0))
+            self.assertCountEqual(connection.execute(select(TrialReservation.status)).scalars(),
+                                  ["RELEASED", "COMMITTED", "EXPIRED", "EXPIRED", "EXPIRED"])
+
+    def test_concurrent_invite_binding_consumes_only_winning_code(self):
+        """同一试用账号同时绑定不同企业时，仅成功事务扣减邀请码并递增版本。"""
+        engine = self._engine
+        user, first, second = _seed_user(engine)
+        with engine.begin() as connection:
+            connection.execute(update(User).where(User.id == user).values(
+                role="TRIAL_USER", is_trial=True, enterprise_id=None,
+            ))
+        service = EnterpriseService(engine)
+        expiry = datetime.now(timezone.utc) + timedelta(minutes=5)
+        for code, enterprise in (("A", first), ("B", second)):
+            service.create_invite_code(enterprise, code, 1, expiry, user)
+        start = Barrier(2)
+
+        def bind(code):
+            start.wait(timeout=5)
+            try:
+                return service.bind_invite(user, code, auth_version=1)
+            except EnterpriseError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            outcomes = list(workers.map(bind, ("A", "B")))
+        winner, = [value for value in outcomes if value is not None]
+        with engine.connect() as connection:
+            self.assertEqual(connection.execute(select(User.enterprise_id, User.auth_version)).one(), (winner, 2))
+            self.assertEqual(dict(connection.execute(select(InviteCode.enterprise_id, InviteCode.used_count)).all()),
+                             {first: int(winner == first), second: int(winner == second)})
 
     def test_postgres_schema(self):
         """验证真实 JSONB、约束、ORM 一致性和 PostgreSQL 回滚重建。"""

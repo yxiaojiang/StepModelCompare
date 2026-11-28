@@ -8,3 +8,4 @@
 | 2026-11-27 | STEP-PLAT-002 | [任务级对比 Worker 与两项 P2 收口](2026-11-27_STEP-PLAT-002_任务级对比Worker与P2收口/INDEX.md) | `APPROVED`（第 1 轮） | libigl、硬超时、网格门禁、日志脱敏 |
 | 2026-11-27 | STEP-PLAT-003 | [特征提取与版本化存储](2026-11-27_STEP-PLAT-003_特征提取与版本化存储/INDEX.md) | `APPROVED`（第 1 轮） | AP242、NPZ、GLB、全库重提取、版本原子切换 |
 | 2026-11-28 | STEP-PLAT-004 | [D5 精排与动态评分剪枝](2026-11-28_STEP-PLAT-004_D5精排与动态评分剪枝/INDEX.md) | `APPROVED`（第 1 轮） | 24 初值、右手刚体、镜像/对称门禁、有效权重、上界剪枝、PMI 兼容 |
+| 2026-11-28 | STEP-PLAT-005 | [鉴权隔离与试用配额](2026-11-28_STEP-PLAT-005_鉴权隔离与试用配额/INDEX.md) | `APPROVED`（第 1 轮） | auth_version、LRU/TTL、邀请码、跨企业隔离、CAS、迟到拦截 |

@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     occt_memory_limit_mb: PositiveInt = ParseLimits.occt_memory_limit_mb
     occt_pool_size: PositiveInt = 2
     occt_tasks_per_worker: PositiveInt = 50
+    auth_pepper: SecretStr | None = None
+    jwt_secret: SecretStr | None = None
+    auth_cache_ttl: PositiveInt = 300
+    auth_cache_capacity: PositiveInt = 1024
+    auth_rate_limit_window: PositiveInt = 60
+    auth_rate_limit_max_attempts: PositiveInt = 5
+    auth_rate_limit_capacity: int = Field(default=4096, ge=2)
+    jwt_ttl: PositiveInt = 3600
+    model_vault: str | None = None
 
     @field_validator("database_url")
     @classmethod
@@ -51,6 +60,16 @@ class Settings(BaseSettings):
         """校验预占回收时限并返回本实例，刚好等于下界或更小时抛 ValueError。"""
         if self.reaper_ttl <= self.queue_wait_timeout + self.compare_job_timeout + 30:
             raise ValueError("reaper_ttl 必须大于 queue_wait_timeout + compare_job_timeout + 30")
+        return self
+
+    @model_validator(mode="after")
+    def validate_auth_secrets(self) -> Self:
+        """同时校验两把独立密钥；未配置时关闭鉴权入口，配置不完整或强度不足时抛 ValueError。"""
+        if self.auth_pepper is None and self.jwt_secret is None:
+            return self
+        values = [key.get_secret_value() for key in (self.auth_pepper, self.jwt_secret) if key is not None]
+        if len(values) != 2 or len(set(values)) != 2 or min(len(key.encode()) for key in values) < 32:
+            raise ValueError("需分别配置不少于 32 字节的鉴权 pepper 和 JWT 签名密钥")
         return self
 
     def parse_limits(self) -> ParseLimits:
