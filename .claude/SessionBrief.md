@@ -13,7 +13,7 @@
   - 鉴权缓存与即时失效：`users.auth_version` + 有界 LRU/TTL 内存缓存（仅缓成功项，键 `HMAC-SHA256(pepper, uid:auth_version:pwd)`）+ 改密/禁用/锁定/改权递增 `auth_version` + 未命中前 IP+账号双限流。
   - 版本化特征：`model_features(model_id, feature_version, ...)` + `active_feature_version` 全局指针，升级全库就绪并增量补齐后再原子切换；首期不跨企业共享底层几何缓存。
 - **Git 现状**：当前在 `feat/platform-v1` 分支，`Demo/` 与标签 `demo-v0.3.1` 冻结保留。
-- **代码交接**：阶段 2 的 `STEP-PLAT-001` 至 `STEP-PLAT-004` 均独立审核通过并归档，里程碑为 `ecc9474`。阶段 3 首切片 `STEP-PLAT-005` 完成执行者自测并待独立审核。见 [代码审核状态](../CRDocs/STATUS.md) · [历史归档](../CRDocs/archive/INDEX.md)。
+- **代码交接**：阶段 2 里程碑 `ecc9474`，阶段 3 首切片 `STEP-PLAT-005` 里程碑 `6f88188`。`STEP-PLAT-006` 独立审核通过并归档，覆盖五态入库、规则快照、企业/试用双入口对比与常驻调度。独立复测 64 项通过，含 16 项本机 PostgreSQL 用例。见 [STEP-PLAT-006 归档](../CRDocs/archive/2026-11-28_STEP-PLAT-006_五态入库与对比调度/INDEX.md) · [活动审核状态](../CRDocs/STATUS.md) · [有效延期项](../CRDocs/DEFERRED.md)。
 
 ## 未决前提（阶段 1 签认冻结）
 - 客户 20–50 件真实 `.stp` 样本盘点（协议、语义 PMI 可读率、材料填写率、闭合/开壳/多实体占比、单件 OCCT 与单次 `igl` ICP 耗时）。
@@ -26,4 +26,4 @@
 - [决定记录](../PlanDocs/DECISIONS.md) · [STEP-SIM-005 归档](../PlanDocs/STEP-SIM-005/STATUS.md) · [STEP-SIM-004 归档](../PlanDocs/STEP-SIM-004/STATUS.md)
 
 ## 下一步
-独立审核 STEP-PLAT-005 的鉴权失效、跨企业守卫及试用配额事务。通过后接续五态台账和规则后台。客户样本盘点与部署、接口、规则选型签认可并行推进。
+建议在前端框架签认后优先完成 Web 三维对比最小闭环：上传与轮询、双视口、门禁后叠加、待复核分流和选中回传。可视化管理后台、公开注册防刷仍待推进。客户真实样本、部署目标、可信代理与存储策略继续并行签认。

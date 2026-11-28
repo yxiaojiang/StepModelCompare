@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     compare_job_timeout: PositiveInt = 120
     queue_wait_timeout: PositiveInt = 60
     reaper_ttl: PositiveInt = 211
-    sync_wait_timeout: PositiveInt = 25
+    sync_wait_timeout: float = Field(default=25, ge=0, le=30)
     default_top_n: PositiveInt = 5
     max_queue_depth: PositiveInt = 32
     max_file_size_bytes: PositiveInt = ParseLimits.max_file_size_bytes
@@ -40,8 +40,15 @@ class Settings(BaseSettings):
     auth_rate_limit_window: PositiveInt = 60
     auth_rate_limit_max_attempts: PositiveInt = 5
     auth_rate_limit_capacity: int = Field(default=4096, ge=2)
+    invite_bind_max_attempts: PositiveInt = 5
+    upload_max_attempts: PositiveInt = 30
     jwt_ttl: PositiveInt = 3600
     model_vault: str | None = None
+    max_upload_request_bytes: PositiveInt = 256_000_000
+    max_top_n: PositiveInt = 50
+    queue_poll_seconds: float = Field(default=0.25, gt=0, le=10)
+    reaper_interval_seconds: float = Field(default=5, gt=0, le=60)
+    run_queue_workers: bool = True
 
     @field_validator("database_url")
     @classmethod

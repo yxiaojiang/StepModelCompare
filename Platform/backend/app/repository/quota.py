@@ -7,7 +7,8 @@ from sqlalchemy import case, func, select, update
 from sqlalchemy.engine import Connection, Engine
 
 from app.config import Settings
-from app.db.models import CompareJob, CompareResult, TrialReservation, User
+from app.db.models import CompareJob, CompareResult, Enterprise, TrialReservation, User
+from app.repository.rules import active_rule_snapshot
 from app.repository.visibility import VisibilityUser, visible_candidate_query
 
 # 为同一数据库中的对比任务入队保留固定事务锁键，后续全量入队入口须共用此门禁。
@@ -31,6 +32,30 @@ def enqueue_trial_compare(
     """
     if actor.role != "TRIAL_USER" or actor.enterprise_id is not None:
         raise QuotaError("TRIAL_QUOTA_EXCEEDED")
+    return enqueue_compare(
+        engine, settings, actor, source=source, query_filename=query_filename, query_md5=query_md5,
+        auth_version=auth_version, rule_snapshot=rule_snapshot, now=now,
+    )
+
+
+def enqueue_compare(
+    engine: Engine, settings: Settings, actor: VisibilityUser, *, source: str, query_filename: str,
+    query_md5: str, auth_version: int, query_storage_path: str | None = None, top_n: int | None = None,
+    target_enterprise_id: int | None = None, rule_snapshot: dict | None = None, now: datetime | None = None,
+) -> int:
+    """以统一容量门禁入队并返回任务 ID。试用身份同事务预占，其余身份只建立任务。
+
+    公共入口传入可信存储键，事务内固定规则、特征版本、角色及租户。内部调用可提供已有规则快照。
+    QuotaError 表示队列满、身份失效或超试用配额，RuleUnavailable 表示未激活规则。
+    """
+    trial = actor.role == "TRIAL_USER" and actor.enterprise_id is None
+    target = None
+    if actor.role in ("ENT_USER", "ENT_ADMIN") and actor.enterprise_id is not None:
+        target = actor.enterprise_id
+    elif actor.role == "SYS_ADMIN":
+        target = target_enterprise_id
+    elif not trial:
+        raise QuotaError("FORBIDDEN")
     if engine.dialect.name == "postgresql":
         engine = engine.execution_options(isolation_level="READ COMMITTED")
     with engine.begin() as connection:
@@ -43,22 +68,36 @@ def enqueue_trial_compare(
         )).scalar_one()
         if depth >= settings.max_queue_depth:
             raise QuotaError("QUEUE_FULL")
-        changed = connection.execute(update(User).where(
-            User.id == actor.user_id, User.role == "TRIAL_USER", User.is_trial.is_(True),
-            User.enterprise_id.is_(None), User.is_active.is_(True), User.auth_version == auth_version,
+        account = (
+            User.id == actor.user_id, User.role == actor.role, User.enterprise_id == actor.enterprise_id,
+            User.is_trial.is_(trial), User.is_active.is_(True), User.auth_version == auth_version,
             (User.locked_until.is_(None) | (User.locked_until <= moment)),
-            User.used_count + User.in_flight_count < 5,
-        ).values(in_flight_count=User.in_flight_count + 1)).rowcount
-        if changed != 1:
-            raise QuotaError("TRIAL_QUOTA_EXCEEDED")
+        )
+        if target is not None and connection.execute(select(Enterprise.id).where(
+            Enterprise.id == target, Enterprise.status == "ACTIVE",
+        )).scalar_one_or_none() is None:
+            raise QuotaError("FORBIDDEN")
+        if trial:
+            changed = connection.execute(update(User).where(
+                *account, User.used_count + User.in_flight_count < 5,
+            ).values(in_flight_count=User.in_flight_count + 1)).rowcount
+            if changed != 1:
+                raise QuotaError("TRIAL_QUOTA_EXCEEDED")
+        elif connection.execute(select(User.id).where(*account).with_for_update(read=True)).scalar_one_or_none() is None:
+            raise QuotaError("FORBIDDEN")
+        if rule_snapshot is None:
+            rule_snapshot = dict(active_rule_snapshot(connection, target), top_n=top_n,
+                                 role=actor.role, actor_enterprise_id=actor.enterprise_id, auth_version=auth_version)
         job_id = connection.execute(CompareJob.__table__.insert().values(
             user_id=actor.user_id, source=source, query_filename=query_filename, query_md5=query_md5,
-            rule_version_snapshot=rule_snapshot, status="QUEUED", created_at=moment,
+            enterprise_id=target, query_storage_path=query_storage_path, rule_version_snapshot=rule_snapshot,
+            status="QUEUED", created_at=moment,
         ).returning(CompareJob.id)).scalar_one()
-        connection.execute(TrialReservation.__table__.insert().values(
-            user_id=actor.user_id, job_id=job_id, status="RESERVED", created_at=moment, updated_at=moment,
-            expires_at=moment + timedelta(seconds=settings.reaper_ttl),
-        ))
+        if trial:
+            connection.execute(TrialReservation.__table__.insert().values(
+                user_id=actor.user_id, job_id=job_id, status="RESERVED", created_at=moment, updated_at=moment,
+                expires_at=moment + timedelta(seconds=settings.reaper_ttl),
+            ))
         return job_id
 
 
@@ -85,14 +124,74 @@ def commit_trial_results(
             _fail(connection, job_id, "QUOTA_EXPIRED", moment)
             return False
 
-        if results:
-            _check_result_visibility(connection, job.user_id, {result["model_id"] for result in results})
+        _check_result_visibility(connection, VisibilityUser(job.user_id, "TRIAL_USER", None), None, results)
+        if job.query_storage_path is not None:
+            require_job_identity(connection, job, moment)
         _deduct_in_flight(connection, job.user_id, commit=True)
-        if results:
-            connection.execute(CompareResult.__table__.insert(), [dict(result, job_id=job_id) for result in results])
-        connection.execute(update(CompareJob).where(CompareJob.id == job_id).values(
-            status="DONE", termination=termination, max_untested_upper=max_untested_upper, finished_at=moment,
-        ))
+        _publish(connection, job_id, results, termination, max_untested_upper, moment)
+        return True
+
+
+def commit_enterprise_results(engine, job_id: int, results: Sequence[dict], *, termination: str,
+                              max_untested_upper: float | None) -> bool:
+    """发布一笔普通或管理员对比，在同事务内复核任务身份及候选范围；重复完成返回 False。"""
+    with engine.begin() as connection:
+        job = _locked_job(connection, job_id)
+        if job is None or job.status != "RUNNING" or _has_reservation(connection, job_id):
+            return False
+        moment = _now(connection, None)
+        scope = job_actor(job)
+        if scope.role == "TRIAL_USER":
+            raise QuotaError("FORBIDDEN")
+        _check_result_visibility(connection, scope, job.enterprise_id, results)
+        require_job_identity(connection, job, moment)
+        _publish(connection, job_id, results, termination, max_untested_upper, moment)
+        return True
+
+
+def job_actor(job) -> VisibilityUser:
+    """读取可信任务行的身份快照，返回隔离查询使用的身份；缺失快照抛 QuotaError。"""
+    snapshot = job.rule_version_snapshot
+    if snapshot.get("role") not in ("SYS_ADMIN", "ENT_ADMIN", "ENT_USER", "TRIAL_USER"):
+        raise QuotaError("FORBIDDEN")
+    return VisibilityUser(job.user_id, snapshot["role"], snapshot.get("actor_enterprise_id"))
+
+
+def require_job_identity(connection, job, moment, *, lock: bool = True) -> None:
+    """复核任务授权快照与当前账号，默认持共享账号锁到结算结束；已失效抛 QuotaError。"""
+    actor = job_actor(job)
+    statement = select(User.id).where(
+        User.id == actor.user_id, User.role == actor.role, User.enterprise_id == actor.enterprise_id,
+        User.auth_version == job.rule_version_snapshot["auth_version"], User.is_active.is_(True),
+        (User.locked_until.is_(None) | (User.locked_until <= moment)),
+    )
+    if lock:
+        statement = statement.with_for_update()
+    if connection.execute(statement).scalar_one_or_none() is None:
+        raise QuotaError("COMPARE_IDENTITY_CHANGED")
+
+
+def finish_failed_compare(engine, job_id: int, error_code: str, *, now=None, queued_before=None,
+                          running_before=None) -> bool:
+    """按任务行锁终结失败任务，条件提供时只处理超出对应时间的任务，同时原子释放试用预占。"""
+    with engine.begin() as connection:
+        job = _locked_job(connection, job_id)
+        if job is None or job.status not in _OPEN:
+            return False
+        if queued_before is not None and (job.status != "QUEUED" or job.created_at > queued_before):
+            return False
+        if running_before is not None and (job.status != "RUNNING" or job.started_at is None
+                                           or job.started_at > running_before):
+            return False
+        moment = _now(connection, now)
+        if _has_reservation(connection, job_id):
+            expired = _transition(connection, job, "EXPIRED", moment, unexpired=False)
+            if not expired and not _transition(connection, job, "RELEASED", moment):
+                return False
+            if expired:
+                error_code = "QUOTA_EXPIRED"
+            _deduct_in_flight(connection, job.user_id)
+        _fail(connection, job_id, error_code, moment)
         return True
 
 
@@ -144,7 +243,7 @@ def _now(connection: Connection, override: datetime | None) -> datetime:
 
 def _locked_job(connection, job_id):
     # 领取、完成、释放和回收都先锁任务，再变更预占及计数。重复完成不能覆盖已发布的 DONE。
-    return connection.execute(select(CompareJob.id, CompareJob.user_id, CompareJob.status).where(
+    return connection.execute(select(CompareJob).where(
         CompareJob.id == job_id,
     ).with_for_update()).one_or_none()
 
@@ -167,12 +266,28 @@ def _deduct_in_flight(connection, user_id, *, commit=False):
     ))
 
 
-def _check_result_visibility(connection, user_id, model_ids):
-    trial = VisibilityUser(user_id, "TRIAL_USER", None)
+def _check_result_visibility(connection, actor, target, results):
+    model_ids = {result["model_id"] for result in results}
+    if not model_ids:
+        return
     # 锁住发布涉及的模型，避免公开标记或审核状态在复核与提交之间被另一个事务更改。
-    statement = visible_candidate_query(trial, model_ids=model_ids).with_for_update(read=True)
+    statement = visible_candidate_query(actor, target, model_ids=model_ids).with_for_update(read=True)
     if set(connection.execute(statement).scalars()) != model_ids:
         raise QuotaError("RESULT_OUTSIDE_VISIBILITY_SCOPE")
+
+
+def _has_reservation(connection, job_id):
+    return connection.execute(select(TrialReservation.id).where(
+        TrialReservation.job_id == job_id,
+    )).scalar_one_or_none() is not None
+
+
+def _publish(connection, job_id, results, termination, max_untested_upper, moment):
+    if results:
+        connection.execute(CompareResult.__table__.insert(), [dict(result, job_id=job_id) for result in results])
+    connection.execute(update(CompareJob).where(CompareJob.id == job_id).values(
+        status="DONE", termination=termination, max_untested_upper=max_untested_upper, finished_at=moment,
+    ))
 
 
 def _fail(connection, job_id, error_code, moment):

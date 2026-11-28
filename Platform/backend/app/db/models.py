@@ -206,6 +206,8 @@ class CompareJob(Base):
     source: Mapped[str] = mapped_column(String(12))
     query_filename: Mapped[str] = mapped_column(String(255))
     query_md5: Mapped[str] = mapped_column(String(32))
+    # 旧任务与工序测试可无原件引用；调度器只消费带受信存储键的任务。
+    query_storage_path: Mapped[str | None] = mapped_column(Text)
     rule_version_snapshot: Mapped[dict] = mapped_column(JSON_DOCUMENT)
     status: Mapped[str] = mapped_column(String(10), server_default=text("'QUEUED'"))
     termination: Mapped[str | None] = mapped_column(String(16))

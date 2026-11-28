@@ -7,8 +7,9 @@ from base64 import b64decode
 from binascii import Error as Base64Error
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Path as RoutePath, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import select
@@ -16,9 +17,15 @@ from sqlalchemy import select
 from app.auth.cache import AuthCacheValue
 from app.auth.service import AuthenticationError, AuthenticationRateLimited
 from app.db.model_features import active_feature_version, vault_path
-from app.db.models import Enterprise, InviteCode, Model
+from app.db.models import Enterprise, FeatureCatalog, InviteCode, Model, ModelFeature
 from app.enterprise import EnterpriseError, EnterpriseService
 from app.repository.visibility import VisibilityError, visible_glb_query, visible_model_query
+from app.workflow_api import install_workflow_routes
+
+_BIGINT = 2**63 - 1
+AfterId = Annotated[int, Query(ge=0, le=_BIGINT)]
+OptionalQueryId = Annotated[int | None, Query(gt=0, le=_BIGINT)]
+PathId = Annotated[int, RoutePath(gt=0, le=_BIGINT)]
 
 
 class TokenRequest(BaseModel):
@@ -59,6 +66,15 @@ def build_api_router() -> APIRouter:
         if request.app.state.auth_service is None:
             raise HTTPException(503, "鉴权服务尚未配置")
         return request.app.state.auth_service, request.app.state.token_service
+
+    def password_user(request: Request, username: str, password: str) -> AuthCacheValue:
+        auth, _ = services(request)
+        try:
+            return auth.authenticate(username, password, _client_ip(request))
+        except AuthenticationRateLimited:
+            raise HTTPException(429, "登录尝试过于频繁") from None
+        except AuthenticationError:
+            raise HTTPException(401, "凭证无效或已失效") from None
 
     def current_user(request: Request) -> AuthCacheValue:
         """解析 Basic 或 Bearer 凭证并复核当前账号；缺失、失效或超限返回 401/429。"""
@@ -124,6 +140,8 @@ def build_api_router() -> APIRouter:
     @router.post("/auth/bind-invite")
     def bind_invite(request: Request, body: BindInviteRequest, actor: AuthCacheValue = Depends(current_user)) -> dict:
         """核销邀请码并绑定当前试用用户的企业归属。"""
+        if not request.app.state.invite_limiter.allow(f"ip:{_client_ip(request)}", f"uid:{actor.user_id}"):
+            raise HTTPException(429, "邀请码尝试过于频繁")
         try:
             enterprise_id = EnterpriseService(request.app.state.engine).bind_invite(
                 actor.user_id, body.code.get_secret_value(), auth_version=actor.auth_version,
@@ -133,13 +151,13 @@ def build_api_router() -> APIRouter:
         return {"enterprise_id": enterprise_id}
 
     @router.get("/admin/enterprises", dependencies=[Depends(require_admin)])
-    def list_enterprises(request: Request, after_id: int = 0) -> list[dict]:
+    def list_enterprises(request: Request, after_id: AfterId = 0) -> list[dict]:
         """分页列出企业摘要；仅系统管理员可访问，每次最多 100 条。"""
         return _list_records(request, select(Enterprise.id, Enterprise.name, Enterprise.code, Enterprise.status)
                              .where(Enterprise.id > after_id).order_by(Enterprise.id))
 
     @router.get("/admin/invite-codes", dependencies=[Depends(require_admin)])
-    def list_invites(request: Request, after_id: int = 0) -> list[dict]:
+    def list_invites(request: Request, after_id: AfterId = 0) -> list[dict]:
         """分页列出邀请码状态，不返回可用于绑定的秘密值；仅系统管理员可访问。"""
         return _list_records(request, select(
             InviteCode.id, InviteCode.enterprise_id, InviteCode.max_uses, InviteCode.used_count,
@@ -147,27 +165,51 @@ def build_api_router() -> APIRouter:
         ).where(InviteCode.id > after_id).order_by(InviteCode.id))
 
     @router.delete("/admin/invite-codes/{invite_id}")
-    def revoke_invite(request: Request, invite_id: int, actor: AuthCacheValue = Depends(require_admin)) -> dict:
+    def revoke_invite(request: Request, invite_id: PathId, actor: AuthCacheValue = Depends(require_admin)) -> dict:
         """停用指定邀请码，返回本次是否改变状态；权限不足返回 403。"""
         return {"revoked": EnterpriseService(request.app.state.engine).revoke_invite(invite_id, actor.user_id)}
 
     @router.get("/models")
-    def list_models(request: Request, enterprise_id: int | None = None, after_id: int = 0,
+    def list_models(request: Request, enterprise_id: OptionalQueryId = None, after_id: AfterId = 0,
+                    name: Annotated[str | None, Query(max_length=255)] = None,
+                    md5: Annotated[str | None, Query(pattern=r"^[a-fA-F0-9]{32}$")] = None,
+                    uploader_id: OptionalQueryId = None, uploaded_from: datetime | None = None,
+                    uploaded_to: datetime | None = None,
                     actor: AuthCacheValue = Depends(current_user)) -> list[dict]:
         """分页返回模型摘要；企业参数只可收窄系统管理员范围。"""
-        return _list_records(request, _model_summary(actor, enterprise_id=enterprise_id)
-                             .where(Model.id > after_id).order_by(Model.id))
+        query = _model_summary(actor, enterprise_id=enterprise_id).where(Model.id > after_id)
+        if name:
+            query = query.where(Model.model_name.icontains(name, autoescape=True))
+        if md5:
+            query = query.where(Model.md5 == md5.lower())
+        if uploader_id is not None:
+            query = query.where(Model.uploader_id == uploader_id)
+        if uploaded_from is not None:
+            query = query.where(Model.uploaded_at >= uploaded_from)
+        if uploaded_to is not None:
+            query = query.where(Model.uploaded_at <= uploaded_to)
+        return _list_records(request, query.order_by(Model.id))
 
     @router.get("/models/{model_id}")
-    def model_detail(request: Request, model_id: int, actor: AuthCacheValue = Depends(current_user)) -> dict:
+    def model_detail(request: Request, model_id: PathId, actor: AuthCacheValue = Depends(current_user)) -> dict:
         """返回单个可见模型摘要；无权限或不存在返回 404。"""
-        rows = _list_records(request, _model_summary(actor, model_id=model_id))
+        feature = select(ModelFeature.feature_payload).where(
+            ModelFeature.model_id == Model.id, ModelFeature.status == "READY",
+            ModelFeature.feature_version == select(FeatureCatalog.active_feature_version).where(
+                FeatureCatalog.id == 1,
+            ).scalar_subquery(),
+        ).scalar_subquery()
+        rows = _list_records(request, _model_summary(actor, model_id=model_id).add_columns(feature.label("feature_payload")))
         if not rows:
             raise HTTPException(404, "模型不存在")
-        return rows[0]
+        row = rows[0]
+        if isinstance(row["feature_payload"], dict):
+            # 缓存键只供受控 GLB 路由读取，台账只提供特征值。
+            row["feature_payload"].pop("cache_refs", None)
+        return row
 
     @router.get("/models/{model_id}/glb", response_class=FileResponse)
-    def model_glb(request: Request, model_id: int, actor: AuthCacheValue = Depends(current_user)) -> FileResponse:
+    def model_glb(request: Request, model_id: PathId, actor: AuthCacheValue = Depends(current_user)) -> FileResponse:
         """流式返回当前版本的可见模型预览；模型或文件不可见或不存在均返回 404。"""
         try:
             with request.app.state.engine.connect() as connection:
@@ -181,6 +223,7 @@ def build_api_router() -> APIRouter:
             pass
         raise HTTPException(404, "模型预览不存在")
 
+    install_workflow_routes(router, current_user, require_admin, password_user)
     return router
 
 
@@ -197,6 +240,7 @@ def _model_summary(actor, *, model_id=None, enterprise_id=None):
     try:
         return visible_model_query(actor, model_id, enterprise_id).with_only_columns(
             Model.id, Model.enterprise_id, Model.model_name, Model.status,
+            Model.md5, Model.uploader_id, Model.uploaded_at, Model.approved_at, Model.selected_count,
         )
     except VisibilityError:
         raise HTTPException(403, "账号没有可用企业范围") from None

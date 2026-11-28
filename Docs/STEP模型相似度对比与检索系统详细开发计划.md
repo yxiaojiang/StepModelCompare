@@ -20,6 +20,7 @@
 **目标**：拿真实数据摸底，把所有可能返工的边界参数一次签认冻结；不依赖冻结参数的数据库与 Worker 骨架同步搭建。
 
 - [ ] **1.1 客户真实样本盘点脚本与体检报告**
+  - ~~实现 STEP 盘点脚本并用自制 STEP 回归协议、PMI、材料、几何与计时统计。~~
   - 抽取客户 20–50 件代表性 `.stp`/`.step`，运行 `STEPCAFControl_Reader` 统计：AP203/214 vs AP242 分布、语义 PMI 可读率、材料与属性填写率、单/多闭合实体与开壳/装配体占比、单文件体积与面片数分布、跨 CAD 重导出面片分裂实测及单次 `igl` ICP 耗时实测。
 - [ ] **1.2 规则、正例集与安全契约签认冻结**
   - 签认 `D1–D7` 默认百分比模板、零分阈值及**单方缺失默认策略**（默认 `ZERO` 保守计分），并书面说明无 PMI 时 `D3 → D7` 替代的实际触发比例；
@@ -63,22 +64,27 @@
 
 **目录**：`Platform/backend/app/db/`、`auth/`、`models_mgmt/` 及对应管理端页面
 
+已独立审核的服务端交付见 [STEP-PLAT-005](../CRDocs/archive/2026-11-28_STEP-PLAT-005_鉴权隔离与试用配额/INDEX.md) 和 [STEP-PLAT-006](../CRDocs/archive/2026-11-28_STEP-PLAT-006_五态入库与对比调度/INDEX.md)。
+
 - [ ] **3.1 账号认证、HMAC+`auth_version` 鉴权缓存与 5 次并发 CAS 预占限额（11 人/天）**
-  - ~~实现数据库表结构与 Alembic 迁移（`enterprises`, `invite_codes`, `users`[含 `auth_version`], `trial_reservations`, `models`, `model_features`, `similarity_rules`, `compare_jobs`, `compare_results`, `audit_logs`）~~
-  - ~~实现 Argon2id、JWT 登录、Basic Auth、HMAC 有界 LRU/TTL 成功缓存、`auth_version` 即时失效和 IP + 账号双限流~~（执行者自测完成，待独立审核）。
-  - ~~实现企业创建和查询、邀请码创建/查询/撤销及限次原子绑定~~（后端接口，待独立审核）。
-  - ~~实现试用任务原子入队和 5 次预占、结果 CAS 实扣、失败回滚及过期回收，接通已领取试用任务的精排与结算~~（后端事务在本机 PostgreSQL 通过自测，待独立审核）。
-  - ~~封装 Repository 层 `apply_visibility_scope`，用于列表、详情、GLB 和已领取试用任务的候选与结果发布~~（待独立审核）。
-  - 注册入口（IP 限流 + 本地验证码 + 后台开关）、企业对比入口及 Web/客户端上传、轮询、常驻调度接线随对应切片交付。
+  - ~~实现数据库表结构与 Alembic 迁移（`enterprises`、`invite_codes`、`users`〔含 `auth_version`〕、`trial_reservations`、`models`、`model_features`、`similarity_rules`、`compare_jobs`、`compare_results`、`audit_logs`）。~~
+  - ~~实现 Argon2id、JWT 登录、Basic Auth、HMAC 有界 LRU/TTL 成功缓存、`auth_version` 即时失效和 IP + 账号双限流。~~
+  - ~~实现企业创建和查询、邀请码创建/查询/撤销及限次原子绑定。~~
+  - ~~实现试用任务原子入队和 5 次预占、结果 CAS 实扣、失败回滚及过期回收，接通已领取试用任务的精排与结算。~~
+  - ~~封装 Repository 层 `apply_visibility_scope`，用于列表、详情、GLB、对比候选和结果发布。~~
+  - ~~接通企业/试用对比、Web/客户端上传与轮询、常驻消费和定时回收。~~
+  - 注册入口（IP 限流 + 本地验证码 + 后台开关），依赖阶段 1 签认。
 - [ ] **3.2 模型台账管理、五态审核流与 MD5 幂等去重（13 人/天）**
-  - 实现服务端批量上传与手动对比查询归档（查询件与模型库隔离，有界队列满额返回 `503`）；
-  - 实现 `PENDING → INDEXING → APPROVED / PARSE_FAILED` 及 `REJECTED` 五态状态机与隔离暂存区管理；
-  - 实现同企业重复 MD5 幂等跳过（`APPROVED`/`PENDING`/`INDEXING`）与历史失败重提，跨企业各自独立提取不共享缓存；
-  - 完整落库并展示 6 项必记字段（`md5码`、`模型名称`、`日期`、`上传人`、`模型特征值`、`对比选中次数`）及多条件检索。
+  - ~~实现服务端批量上传、五态审核、同企 MD5 去重、失败重提、查询独立归档和满队列 `503`。~~
+  - ~~台账 API 落库并返回六项必记字段，支持多条件筛选。~~
+  - 开发可视化台账与批量审核交互，展示 MD5、模型名称、日期、上传人、模型特征值和对比选中次数。
 - [ ] **3.3 服务端规则配置与管理后台（7 人/天）**
-  - 开发可视化规则配置页（`D1–D7` 滑块/输入实时校验 `100%`、零分阈值、双/单方缺失策略、上限 $K$、多项目模板保存与一键生效、规则版本快照）；
-  - 开发企业/邀请码/试用配额与审核日志管理页。
-- [ ] **阶段 3 放行条件**：四角色越权矩阵测试 0 泄漏；在 PostgreSQL 上 10 路并发测试 5 次限额无穿透、损坏件准确回滚、超时回收后迟到完成件 100% 拦截结果；`PENDING` 与 `PARSE_FAILED` 检索命中为 0。
+  - ~~实现规则配置后台 API、版本激活、企业覆盖和任务快照落库。~~
+  - 开发可视化规则配置页（`D1–D7` 滑块/输入实时校验 `100%`、零分阈值、双/单方缺失策略、上限 $K$、多项目模板保存与一键生效）。
+  - 开发企业/邀请码/试用配额与审核日志管理页，补记管理员直传审计（`PLAT-006-P2-1`）。
+- [ ] **阶段 3 放行条件**
+  - ~~本机 PostgreSQL 和 ASGI 验证 10 路并发 5 次限额无穿透、损坏件准确回滚、超时回收后迟到结果零落库。~~
+  - 四角色越权矩阵测试 0 泄漏，并在矩阵中核对 `PENDING` 与 `PARSE_FAILED` 检索命中为 0。现有用例已覆盖待审不可读、解析失败不可读且未进入回归场景的候选结果。
 
 ---
 
@@ -88,12 +94,14 @@
 
 - [ ] **4.1 服务端三维图形化对比工作台（13 人/天）**
   - 集成 Three.js 本地打包查看器：双视口同步旋转缩放并排对比、通过对齐校验后的同尺度双色半透明叠加（$C_{\text{新}} T C_{\text{旧}}^{-1}$）与单模显隐；
-  - 实现上传对比与异步进度轮询、高相似度候选列表、「待复核」折叠区（强制禁用叠加）、分项误差与有效权重/单方缺失详情弹窗、点击选中原子回写 `selected_count`；
+  - ~~交付 Web 上传、异步轮询、候选/待复核结果和选中幂等回写 `selected_count` 的服务端接口。~~
+  - 接通工作台上传、进度轮询和选中回传交互，按任务授权交付查询件 GLB，展示候选列表、「待复核」折叠区（强制禁用叠加）及分项误差、有效权重和单方缺失详情；
   - 固定展示工程边界提示文案。
 - [ ] **4.2 客户端双 API、安全限流与调用示例（11 人/天）**
-  - 交付 `POST /api/v1/auth/token`、`POST /api/v1/client/models/batch-upload`、`POST /api/v1/client/compare`、`POST /api/v1/client/compare/{job_id}/select`；
-  - 中间件强制禁 URL Query 传密码、凭证日志脱敏、频率限制、单文件/单批/暂存磁盘配额控制；
-  - 输出 OpenAPI 接口文档与 `Platform/client_sdk/` 调用示例脚本（Python / curl）。
+  - ~~交付 `POST /api/v1/auth/token`、`POST /api/v1/client/models/batch-upload`、`POST /api/v1/client/compare`、`GET /api/v1/client/compare/{job_id}`、`POST /api/v1/client/compare/{job_id}/select` 及 OpenAPI 接口描述。~~
+  - ~~实现 URL Query 凭证拦截、应用日志脱敏、进程内频率限制及单文件、批次文件数和 multipart 请求体上限。~~
+  - 验证目标环境 HTTPS、可信代理和多进程限流，落实签认的暂存磁盘配额、查询原件保留期限及孤立文件处置。
+  - 交付 `Platform/client_sdk/` 调用示例脚本（Python / curl）。
 - [ ] **4.3 整机联调、六大验收矩阵与部署交付**（当前未分配工时，见 `STEP-SIM-005`）
   - 在目标环境执行 [详细开发设计文档](STEP模型相似度对比与检索系统详细开发设计文档.md) 第 7.1 节全部六大验收测试（含完整检索找回分母统计与四类归因）；
   - 交付部署脚本（按阶段 1 冻结的首期部署目标）、联调验收报告与运维手册。

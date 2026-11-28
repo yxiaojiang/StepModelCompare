@@ -6,6 +6,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -17,6 +18,7 @@ from app.auth.cache import AuthSuccessCache
 from app.auth.rate_limit import AuthRateLimiter
 from app.auth.service import AuthService
 from app.auth.tokens import TokenService
+from app.queue_runtime import queue_workers
 
 _LOG = logging.getLogger("step_platform")
 
@@ -40,9 +42,16 @@ async def _lifespan(application: FastAPI):
     engine = build_engine(settings)
     application.state.settings = settings
     application.state.engine = engine
+    def action_limiter(max_attempts):
+        return AuthRateLimiter(
+            max_attempts, settings.auth_rate_limit_window,
+            capacity=settings.auth_rate_limit_capacity,
+        )
     try:
         application.state.auth_service = None
         application.state.token_service = None
+        application.state.invite_limiter = action_limiter(settings.invite_bind_max_attempts)
+        application.state.upload_limiter = action_limiter(settings.upload_max_attempts)
         if settings.auth_pepper is not None and settings.jwt_secret is not None:
             application.state.auth_service = AuthService(
                 engine, settings.auth_pepper.get_secret_value(),
@@ -53,7 +62,12 @@ async def _lifespan(application: FastAPI):
                 ),
             )
             application.state.token_service = TokenService(settings.jwt_secret.get_secret_value(), settings.jwt_ttl)
-        yield
+        workers = queue_workers(engine, settings)
+        workers.__enter__()
+        try:
+            yield
+        finally:
+            await run_in_threadpool(workers.__exit__, None, None, None)
     finally:
         engine.dispose()
 

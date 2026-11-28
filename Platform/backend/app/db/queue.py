@@ -8,10 +8,11 @@ from sqlalchemy.engine import Engine
 from app.db.models import CompareJob, Model
 
 
-def claim_compare_job(engine: Engine, queue_wait_timeout: int) -> int | None:
+def claim_compare_job(engine: Engine, queue_wait_timeout: int, *, stored_only: bool = False) -> int | None:
     """从 engine 领用仍在 queue_wait_timeout 秒内的最早任务并返回 ID，空队列返回 None。
 
-    非 PostgreSQL 抛 RuntimeError，无效等待时间抛 ValueError，数据库故障传播 SQLAlchemyError。
+    stored_only 限定有可恢复原件引用的任务。非 PostgreSQL 抛 RuntimeError，无效等待时间抛 ValueError，
+    数据库故障传播 SQLAlchemyError。
     """
     if queue_wait_timeout <= 0:
         raise ValueError("队列等待上限须为正数")
@@ -22,6 +23,8 @@ def claim_compare_job(engine: Engine, queue_wait_timeout: int) -> int | None:
         .where(CompareJob.status == "QUEUED", CompareJob.created_at > cutoff)
         .order_by(CompareJob.created_at, CompareJob.id)
     )
+    if stored_only:
+        candidate = candidate.where(CompareJob.query_storage_path.is_not(None))
     return _claim(engine, candidate, CompareJob, status="RUNNING", started_at=func.now())
 
 
